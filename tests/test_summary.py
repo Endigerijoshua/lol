@@ -162,6 +162,39 @@ def test_gas_flare_sub_label_mentioned():
     assert "VIIRS Nightfire" in prop["explanation"]
 
 
+def test_unregistered_persistent_note_in_summary():
+    prop = _summarize(
+        _props(
+            fire_type_rule="industrial",
+            near_industrial=True,
+            distance_m=340,
+            persistent_thermal_source=True,
+            occurrence_count=4,
+            unregistered_persistent=True,
+        )
+    )
+    assert prop["summary_unregistered"]
+    assert "Unregistered" in prop["summary_unregistered"]
+    assert "no known facility match" in prop["summary_unregistered"]
+    assert "Unregistered" in prop["summary"]
+
+
+def test_registered_persistent_has_no_unregistered_note():
+    prop = _summarize(
+        _props(
+            fire_type_rule="industrial",
+            near_industrial=True,
+            distance_m=340,
+            persistent_thermal_source=True,
+            occurrence_count=3,
+            unregistered_persistent=False,
+            power_plant_name="Panipat",
+        )
+    )
+    assert prop["summary_unregistered"] is None
+    assert "Unregistered" not in prop["summary"]
+
+
 def test_all_summary_fields_present():
     prop = _summarize(_props())
     for key in (

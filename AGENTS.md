@@ -314,6 +314,10 @@ sih-fire-detection/
        `industrial_match_source` = `osm` / `power_plant_db` / `both` + `near_power_plant`,
        `power_plant_name`, `power_plant_distance_m`. Frontend renders a power-plant
        overlay and a NASA GIBS true-color base-layer toggle (OSM/MODIS/VIIRS, render-only).
+       OSM is the DEFAULT base layer; GIBS is strictly opt-in via the Layer control. GIBS
+       dates can lack an India granule (404 → black tile gaps), so `pickGIBSDate()` in
+       `static/app.js` probes the last 7 days and registers the toggle only for the newest
+       date with verified z5 India tiles — never hardcode "yesterday".
 - [x] Weak-label ML classifier trained + wired in: `scripts/train_classifier.py` (balance
        guard ≥5%/class, always backfills FIRMS `days=5` — the area API caps day range at
        [1..5]); `app/services/ml.py` (predict + shared encoding); `fire_type_rule`,
@@ -376,6 +380,29 @@ sih-fire-detection/
        all mirrors on `httpx.RequestError`/429/502/503/504. Tests added in
        `tests/test_osm_resilience.py` (timeout→next, 500→next, garbage-body→next,
        all-mirrors-fail→RuntimeError, timeout propagation, and app import does no
-       network work) — 73 tests, ruff clean.
+       network work) — 88 tests, ruff clean (includes new dashboard features below).
+- [x] Dashboard feature pack:
+  - **Relative "time since detection"** (`static/app.js` `acqTimestamp`/`timeSinceText`,
+    FIRMS `acq_time` is UTC HHMM with 2400 = next-dn midnight). Every card + popup
+    shows "12 min ago"; refreshes every 45 s via `setInterval(refreshAges)` with **no
+    reload**; `< 30 min` detections get a `.age.fresh` green accent (fires under half an
+    hour are scannable at a glance).
+  - **Severity (FRP) sort**: `#sort` select (Priority / Severity (FRP) / Newest /
+    Nearest). FRP is surfaced on every card via the `.meta` row (`FRP 42.3 MW`, ember
+    accent) — no longer buried in the Details expander.
+  - **Unregistered persistent source** (new derived class, highest-value alert): a fire
+    that is `persistent_thermal_source` AND matches no named WRI power plant
+    (`app/services/persistence.py:_unregistered_persistent` → `unregistered_persistent`
+    prop; `summary_unregistered` note in `app/services/summary.py`). Frontend category
+    precedence `unregistered → persistent → flare → …` with 🚨 filter tab, ember
+    markers, `.unreg` framing "Unregistered — no known facility match (WRI power-plant
+    database)".
+  - **Multi-day diff view**: "Show" select (`#view-new`) = All / New since last refresh
+    / New since yesterday. Backend: `app/db.py:annotate_new_since_last_refresh` (called
+    in `main.py` before `record_featurecollection`, so a fire is "new" when its
+    (lat,lon,date,time,satellite) key wasn't stored before) + `is_new_since_yesterday`
+    (acq_date ≥ today UTC). A status chip shows "New since X: N of M detections".
+  - Tests: `tests/test_diff.py` (9) + unregistered/is_new cases in
+    `tests/test_persistence.py` + summary note tests — 88 total, ruff clean.
 - [ ] DBSCAN clustering (stretch)
 - [ ] Deployed somewhere accessible for demo

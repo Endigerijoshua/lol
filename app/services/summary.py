@@ -192,12 +192,20 @@ def add_summary(fires_fc: dict) -> dict:
         if prop.get("persistent_thermal_source"):
             persistent = _persistent_note(prop, rule)
 
+        unregistered = ""
+        if prop.get("unregistered_persistent"):
+            unregistered = (
+                "Unregistered \u2014 no known facility match "
+                "(WRI power-plant database)."
+            )
+
         prop["summary_headline"] = headline
         prop["summary_detail"] = detail
         prop["summary_icon"] = ICONS[rule]
+        prop["summary_unregistered"] = unregistered or None
         prop["summary"] = f"{headline} \u2014 {detail}" + (
             f" {persistent}" if persistent else ""
-        )
+        ) + (f" {unregistered}" if unregistered else "")
         prop["summary_persistent"] = persistent or None
         prop["explanation"] = _explanation(prop)
     logger.info(

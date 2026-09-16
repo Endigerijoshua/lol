@@ -28,12 +28,12 @@ from ..config import repo_path, settings
 logger = logging.getLogger(__name__)
 
 OVERPASS_URLS = (
-    "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-    "https://lz4.overpass-api.de/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",               # fast (3-5 s)
+    "https://overpass.openstreetmap.fr/api/interpreter",          # fast (3-5 s)
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",   # fast (3-5 s)
+    "https://overpass-api.de/api/interpreter",                    # medium
+    "https://z.overpass-api.de/api/interpreter",                  # slow (6-20 s)
+    "https://overpass.kumi.systems/api/interpreter",              # very slow (30 s+)
 )
 
 OVERPASS_RETRIES = 1

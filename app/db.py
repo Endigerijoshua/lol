@@ -91,6 +91,78 @@ def record_featurecollection(fc: dict) -> int:
     return _insert_many(rows)
 
 
+def _feature_key(
+    lat: float, lon: float, acq_date: str, acq_time, satellite
+) -> tuple:
+    """Dedup key mirroring the fire_history UNIQUE constraint."""
+    return (float(lat), float(lon), str(acq_date), acq_time, satellite)
+
+
+def existing_feature_keys(fc: dict) -> set[tuple]:
+    """Subset of `fc`'s dedup keys that are already present in fire_history.
+
+    Used to mark "new since last refresh": a detection is new when its key is
+    NOT already stored before this fetch is recorded.
+    """
+    want = []
+    for feature in fc.get("features", []):
+        props = feature.get("properties") or {}
+        geom = feature.get("geometry") or {}
+        coords = geom.get("coordinates")
+        if coords and props.get("acq_date"):
+            lon, lat = coords[0], coords[1]
+            if lon is None or lat is None:
+                continue
+            want.append(
+                _feature_key(
+                    lat, lon, props["acq_date"], props.get("acq_time"),
+                    props.get("satellite"),
+                )
+            )
+    if not want:
+        return set()
+    found: set[tuple] = set()
+    with get_connection() as conn:
+        for lat, lon, acq_date, acq_time, satellite in want:
+            row = conn.execute(
+                """
+                SELECT 1 FROM fire_history
+                WHERE latitude = ? AND longitude = ?
+                  AND acq_date = ? AND acq_time IS ? AND satellite IS ?
+                """,
+                (lat, lon, acq_date, acq_time, satellite),
+            ).fetchone()
+            if row:
+                found.add((lat, lon, acq_date, acq_time, satellite))
+    return found
+
+
+def annotate_new_since_last_refresh(fc: dict) -> dict:
+    """Set `is_new_since_last_refresh` on every feature before it is recorded.
+
+    A detection is "new" when it is not already present in fire_history — i.e.
+    it appeared since the previous refresh/fetch of the feed. Call this BEFORE
+    `record_featurecollection` so the comparison is against the prior snapshot.
+    Mutates and returns the input FeatureCollection.
+    """
+    existing = existing_feature_keys(fc)
+    for feature in fc.get("features", []):
+        props = feature.get("properties") or {}
+        geom = feature.get("geometry") or {}
+        coords = geom.get("coordinates")
+        is_new = False
+        if coords and props.get("acq_date"):
+            lon, lat = coords[0], coords[1]
+            if lon is not None and lat is not None:
+                key = _feature_key(
+                    lat, lon, props["acq_date"], props.get("acq_time"),
+                    props.get("satellite"),
+                )
+                is_new = key not in existing
+        props["is_new_since_last_refresh"] = is_new
+    return fc
+
+
 def _insert_many(rows: list[tuple]) -> int:
     if not rows:
         return 0

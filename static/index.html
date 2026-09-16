@@ -90,7 +90,17 @@
       background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
       border-bottom: 1px solid var(--line);
     }
-    .live-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .brand {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 26px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      color: var(--text-1);
+      white-space: nowrap;
+    }
+    .brand .brand-flame { color: var(--ember); }
+    .live-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
     .live {
       display: inline-flex; align-items: center; gap: 6px;
       font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em;
@@ -259,6 +269,23 @@
       font-family: var(--font-display); font-weight: 600; font-size: 24px;
       color: var(--accent); margin-right: 6px;
     }
+    /* Card meta row: FRP + relative age */
+    .meta {
+      display: flex; align-items: center; gap: 14px; margin-top: 6px;
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-3);
+    }
+    .meta .frp { color: var(--text-2); }
+    .meta .frp b { color: var(--ember); font-weight: 600; }
+    .meta .age { color: var(--text-3); }
+    .meta .age.fresh { color: var(--accent); font-weight: 600; }
+    .meta .age.fresh::before { content: "\2022"; margin-right: 4px; }
+    .unreg {
+      margin: 6px 0 0; padding: 6px 8px;
+      font-size: 12px; font-weight: 500; color: var(--ember-deep);
+      background: rgba(193, 73, 83, 0.08);
+      border: 1px solid rgba(193, 73, 83, 0.25); border-radius: 6px;
+      line-height: 1.4;
+    }
     #legend { margin-top: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px 14px; }
     #legend .swatch {
       display: inline-block; width: 10px; height: 10px; border-radius: 50%;
@@ -304,6 +331,7 @@
     }
 
     .entry.entry-persistent   { --card-accent: var(--persist); }
+    .entry.entry-unregistered { --card-accent: var(--ember); }
     .entry.entry-flare        { --card-accent: var(--flare); }
     .entry.entry-industrial   { --card-accent: var(--industrial); }
     .entry.entry-mining       { --card-accent: var(--mine); }
@@ -329,6 +357,7 @@
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
     }
     .verdict .badge.badge-persistent    { --badge-accent: var(--persist); }
+    .verdict .badge.badge-unregistered { --badge-accent: var(--ember); }
     .verdict .badge.badge-flare         { --badge-accent: var(--flare); }
     .verdict .badge.badge-industrial    { --badge-accent: var(--industrial); }
     .verdict .badge.badge-mining        { --badge-accent: var(--mine); }
@@ -391,6 +420,9 @@
     .list-fade .entry { animation: listIn .3s ease backwards; }
     .list-fade .entry:nth-child(2n) { animation-delay: .03s; }
     .list-fade .entry:nth-child(3n) { animation-delay: .06s; }
+
+    /* Filter toggles just hide/show an already-built section — no rebuild. */
+    .cat-section.hidden { display: none !important; }
     @keyframes listIn {
       from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: none; }
@@ -457,6 +489,7 @@
 
   <aside id="sidebar">
     <header>
+      <div class="brand">Ember<span class="brand-flame">Map</span></div>
       <div class="live-row">
         <span class="live"><span class="dot"></span>Live</span>
         <span class="live-spacer"></span>
@@ -483,6 +516,17 @@
                 <span>All Detections</span>
               </span>
               <span class="badge-count skeleton" id="count-all"></span>
+            </span>
+          </label>
+          <label class="filter-checkbox">
+            <input type="checkbox" data-category="unregistered">
+            <span class="custom-checkbox"></span>
+            <span class="checkbox-label">
+              <span class="checkbox-label-text">
+                <span class="emoji">🚨</span>
+                <span>Unregistered</span>
+              </span>
+              <span class="badge-count skeleton" id="count-unreg"></span>
             </span>
           </label>
           <label class="filter-checkbox">

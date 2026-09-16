@@ -173,6 +173,7 @@ async def get_flagged_fires(days: int | None = None) -> dict:
     """Live fires annotated with rule-based + ML fire type and persistence."""
     try:
         fires_fc = await firms.fetch_fires(days=days)
+        db.annotate_new_since_last_refresh(fires_fc)
         db.record_featurecollection(fires_fc)
         logger.info(
             "[flagged-fires] %d fires fetched", len(fires_fc.get("features", []))
@@ -281,6 +282,7 @@ async def get_thermal_sites(days: int | None = None) -> dict:
     """DBSCAN-cluster persistent recurrences into named industrial sites."""
     try:
         fires_fc = await firms.fetch_fires(days=days)
+        db.annotate_new_since_last_refresh(fires_fc)
         db.record_featurecollection(fires_fc)
         (
             industrial_fc,

@@ -94,3 +94,94 @@ def test_occurrences_outside_14day_window_not_counted(temp_db):
     _record([_feature(lat + 0.001, lon, d) for d in _days_ago(15, 16)])
     count = persistence.occurrence_count(lat, lon)
     assert count == 0
+
+
+def _annotate(persistent, **override):
+    props = {
+        "persistent_thermal_source": persistent,
+        "near_power_plant": False,
+        "power_plant_name": None,
+    }
+    props.update(override)
+    return props
+
+
+def test_unregistered_persistent_when_no_facility_match():
+    props = _annotate(persistent=True)
+    assert persistence._unregistered_persistent(props) is True
+
+
+def test_unregistered_persistent_false_when_named_plant_match():
+    props = _annotate(
+        persistent=True, near_power_plant=True, power_plant_name="Panipat"
+    )
+    assert persistence._unregistered_persistent(props) is False
+
+
+def test_unregistered_false_when_not_persistent():
+    props = _annotate(persistent=False)
+    assert persistence._unregistered_persistent(props) is False
+
+
+def test_persistent_unregistered_annotated_end_to_end(temp_db):
+    lat, lon = 20.0, 76.0
+    _record([_feature(lat + 0.001, lon, d) for d in _days_ago(1, 8)])
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": 0,
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {
+                    "acq_date": db.today().isoformat(),
+                    "acq_time": 1234,
+                    "satellite": "T",
+                    "confidence": "n",
+                    "near_power_plant": False,
+                    "power_plant_name": None,
+                },
+            }
+        ],
+    }
+    persistence.annotate_persistence(fc)
+    props = fc["features"][0]["properties"]
+    assert props["persistent_thermal_source"] is True
+    assert props["unregistered_persistent"] is True
+
+
+def test_registered_persistent_annotated_end_to_end(temp_db):
+    lat, lon = 20.0, 76.0
+    _record([_feature(lat + 0.001, lon, d) for d in _days_ago(1, 8)])
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": 0,
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {
+                    "acq_date": db.today().isoformat(),
+                    "acq_time": 1234,
+                    "satellite": "T",
+                    "confidence": "n",
+                    "near_power_plant": True,
+                    "power_plant_name": "Panipat",
+                },
+            }
+        ],
+    }
+    persistence.annotate_persistence(fc)
+    props = fc["features"][0]["properties"]
+    assert props["persistent_thermal_source"] is True
+    assert props["unregistered_persistent"] is False
+
+
+def test_is_new_since_yesterday_for_today_yesterday_and_garbage():
+    assert persistence._is_new_since_yesterday(
+        {"acq_date": db.today().isoformat()}
+    ) is True
+    old = (db.today() - dt.timedelta(days=1)).isoformat()
+    assert persistence._is_new_since_yesterday({"acq_date": old}) is False
+    assert persistence._is_new_since_yesterday({"acq_date": "not-a-date"}) is False
+    assert persistence._is_new_since_yesterday({}) is False

@@ -107,6 +107,23 @@
       min-height: 0;
     }
 
+    /* Glass panel: frosted card wrapping the wordmark, tagline, description
+       and CTA. backdrop-filter is progressive enhancement — without it the
+       card is still a readable translucent white. */
+    .hero-card {
+      max-width: min(860px, calc(100vw - 40px));
+      padding: clamp(34px, 5.5vw, 60px);
+      background: rgba(255, 255, 255, 0.2);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 28px;
+      box-shadow:
+        0 18px 50px rgba(33, 37, 41, 0.16),
+        0 4px 14px rgba(33, 37, 41, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+
     .wordmark {
       font-family: var(--font-display);
       font-weight: 700;
@@ -401,6 +418,7 @@
 
     @media (max-height: 600px) {
       #hero-content { padding-bottom: 60px; }
+      .hero-card { padding: 22px 30px; }
       .wordmark { font-size: clamp(36px, 6vw, 60px); }
       .cta { margin-top: 16px; padding: 13px 30px; font-size: 16px; }
       .description { font-size: 12.5px; }
@@ -441,16 +459,17 @@
     </div>
 
     <div id="hero-content">
-      <h1 class="wordmark">Ember<span class="flame">Map</span></h1>
-      <p class="tagline">
-        Real-time AI detection for <strong>industrial fires</strong> and
-        <strong>persistent thermal sources</strong> across India.
-      </p>
-      <p class="description">
-        Fuses live NASA FIRMS hotspots with OSM, WRI power-plant and NASA gas-flare
-        data to classify fires as industrial, forest, agricultural or mining.
-      </p>
-      <a class="cta" href="/dashboard">Open Dashboard <span class="arrow">→</span></a>
+      <div class="hero-card">
+        <h1 class="wordmark">Ember<span class="flame">Map</span></h1>
+        <p class="tagline">
+          Real-time AI detection for fires and persistent thermal sources across India.
+        </p>
+        <p class="description">
+          Fuses live NASA FIRMS hotspots with OSM, WRI power-plant and NASA gas-flare
+          data to classify fires as industrial, forest, agricultural or mining.
+        </p>
+        <a class="cta" href="/dashboard">Open Dashboard <span class="arrow">→</span></a>
+      </div>
     </div>
 
     <footer>

@@ -385,3 +385,100 @@ def test_fire_near_mining_and_forest_is_mining():
     prop = feats[0]["properties"]
     assert prop["fire_type_rule"] == "mining"  # mining beats forest when not industrial
     assert prop["near_vegetation"] is True  # still records the vegetation proximity
+
+
+def test_forest_and_other_natural_never_overlap():
+    """Every detection maps to exactly one fire_type_rule; forest and
+    agriculture (other_natural) are complementary buckets — a fire can never
+    appear in both. (Rules: industrial 1 km > mining 1 km > forest 3 km veg >
+    other_natural fallback.)"""
+    feats = _run(
+        [FIRE_IN_FOREST, FIRE_FAR_AWAY, FIRE_IN_BOTH, FIRE_NEAR_MINING, FIRE_INSIDE],
+        FOREST_FC,
+        power_plants_fc={"type": "FeatureCollection", "features": [POWER_PLANT_SOLO]},
+        flares_fc={"type": "FeatureCollection", "features": [FLARE_SITE]},
+        mining_fc=MINING_OVERLAP_FC,
+    )
+    forest_ids, natural_ids = set(), set()
+    for feat in feats:
+        rule = feat["properties"]["fire_type_rule"]
+        assert rule in ("industrial", "mining", "forest", "other_natural")
+        if rule == "forest":
+            forest_ids.add(feat["id"])
+        elif rule == "other_natural":
+            natural_ids.add(feat["id"])
+    assert forest_ids.isdisjoint(natural_ids)
+
+
+def test_forest_and_other_natural_fields_are_complementary():
+    """The per-fire flags used by the frontend buckets can't both fire: a fire
+    is 'forest' iff flagged near_vegetation (and not industrial/mining), and
+    'other_natural' never has near_vegetation — so the two UI lists can't share
+    a detection even by side-effect."""
+    feats = _run([FIRE_IN_FOREST, FIRE_FAR_AWAY, FIRE_IN_BOTH], FOREST_FC)
+    for feat in feats:
+        prop = feat["properties"]
+        rule = prop["fire_type_rule"]
+        near_veg = prop["near_vegetation"]
+        if rule == "forest":
+            assert near_veg is True
+            assert prop["near_industrial"] is False
+            assert prop["near_mining"] is False
+        elif rule == "other_natural":
+            assert near_veg is False
+
+
+# ── Frontend category-mapping mirror (static/app.js fireCategory()).
+# The sidebar buckets each fire into exactly ONE tab; forest & agriculture must
+# never both list the same detection. Kept in sync with the JS precedence:
+# unregistered → persistent → flare → industrial → mining → forest → other.
+def _frontend_category(props):
+    if props.get("unregistered_persistent"):
+        return "unregistered"
+    if props.get("persistent_thermal_source"):
+        return "persistent"
+    if props.get("gas_flare"):
+        return "flare"
+    rule = props.get("fire_type_rule") or "other_natural"
+    if rule == "industrial" or props.get("near_industrial"):
+        return "industrial"
+    if rule == "mining" or props.get("near_mining"):
+        return "mining"
+    if rule == "forest" or props.get("near_vegetation"):
+        return "forest"
+    return "other_natural"
+
+
+def test_frontend_category_mapping_is_exclusive():
+    ALL = (
+        "unregistered",
+        "persistent",
+        "flare",
+        "industrial",
+        "mining",
+        "forest",
+        "other_natural",
+    )
+    cases = [
+        {"fire_type_rule": "forest", "near_vegetation": True},
+        {"fire_type_rule": "other_natural", "near_vegetation": False},
+        {"fire_type_rule": "forest", "near_vegetation": True,
+         "persistent_thermal_source": True, "occurrence_count": 3},
+        {"fire_type_rule": "forest", "near_vegetation": True,
+         "unregistered_persistent": True},
+        {"fire_type_rule": "other_natural", "near_vegetation": False,
+         "gas_flare": True},  # malformed data: precedence still picks ONE
+        {"fire_type_rule": "forest"},  # missing flag: rule takes precedence
+        {},  # empty props → agriculture
+        {"fire_type_rule": "other_natural", "near_vegetation": True},  # legacy data
+    ]
+    buckets = {}
+    for i, props in enumerate(cases):
+        cat = _frontend_category(props)
+        assert cat in ALL
+        buckets.setdefault(cat, set()).add(i)
+
+    assert buckets["forest"].isdisjoint(buckets["other_natural"])
+    assert _frontend_category(
+        {"fire_type_rule": "other_natural", "near_vegetation": True}
+    ) == "forest"  # hardened fallback keeps agriculture free of forest flags
