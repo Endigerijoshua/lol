@@ -685,27 +685,64 @@ async function loadDetections(force = false) {
   if (willFetch) showSkeletonLoaders(true);
   try {
     if (willFetch) {
-      [cache.firesFC, cache.zonesFC, cache.powerFC, cache.flaresFC, cache.miningFC] =
-        await Promise.all([
-          fetchJson(FIRES_URL),
-          fetchJson(ZONES_URL),
-          fetchJson(POWER_PLANTS_URL),
-          fetchJson(FLARES_URL),
-          fetchJson(MINING_URL),
-        ]);
+      // Fires are the primary data — render them as soon as they arrive so a
+      // slow or failing reference layer can never blank the whole dashboard.
+      cache.firesFC = await fetchJson(FIRES_URL);
     }
     const features = cache.firesFC.features || [];
     renderFireMarkers(features);
-    renderZones(cache.zonesFC);
-    renderPowerPlants(cache.powerFC);
-    renderFlareSites(cache.flaresFC);
-    renderMiningZones(cache.miningFC);
-    applyFireFilter();
     const counts = renderDetectionsSidebar(features);
     setSummaryCounts(counts);
     const ts = document.getElementById("live-ts");
     if (ts) ts.textContent = `FIRMS feed · ${new Date().toUTCString().slice(17, 25)} UTC`;
+
+    if (willFetch) {
+      // Reference layers stream in independently; a rejection is logged and
+      // skipped rather than failing the whole load (fires stay on the map).
+      const refResults = await Promise.allSettled([
+        fetchJson(ZONES_URL),
+        fetchJson(POWER_PLANTS_URL),
+        fetchJson(FLARES_URL),
+        fetchJson(MINING_URL),
+      ]);
+      const [zones, power, flares, mining] = refResults;
+      if (zones.status === "fulfilled") {
+        cache.zonesFC = zones.value;
+        renderZones(cache.zonesFC);
+      } else {
+        console.warn("industrial zones unavailable:", zones.reason);
+      }
+      if (power.status === "fulfilled") {
+        cache.powerFC = power.value;
+        renderPowerPlants(cache.powerFC);
+      } else {
+        console.warn("power plants unavailable:", power.reason);
+      }
+      if (flares.status === "fulfilled") {
+        cache.flaresFC = flares.value;
+        renderFlareSites(cache.flaresFC);
+      } else {
+        console.warn("flare sites unavailable:", flares.reason);
+      }
+      if (mining.status === "fulfilled") {
+        cache.miningFC = mining.value;
+        renderMiningZones(cache.miningFC);
+      } else {
+        console.warn("mining zones unavailable:", mining.reason);
+      }
+    } else {
+      // Cached path: no network; just re-render whatever reference layers we
+      // already hold (they may have failed to load earlier).
+      if (cache.zonesFC) renderZones(cache.zonesFC);
+      if (cache.powerFC) renderPowerPlants(cache.powerFC);
+      if (cache.flaresFC) renderFlareSites(cache.flaresFC);
+      if (cache.miningFC) renderMiningZones(cache.miningFC);
+    }
+    applyFireFilter();
   } catch (err) {
+    // Only a fires-endpoint failure lands here (reference layers degrade
+    // gracefully above), so this message always means the core view really
+    // could not load.
     console.error(err);
     showError(`Failed to load detections: ${err.message}`);
   }

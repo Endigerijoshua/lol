@@ -7,6 +7,7 @@ endpoints that fetch + enrich live fire data.
 import asyncio
 import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Check runs before importing app.services / app.config — those modules use
@@ -52,10 +53,87 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Warm the reference-layer caches in the background at boot.
+
+    The OSM zone caches (industrial / vegetation / mining) are git-ignored and
+    rebuilt from Overpass on first use. Without this, the first dashboard
+    request cold-builds them and stalls for minutes while the page shows only
+    skeleton loaders ("data is not fetching"). Kicking off the build here means
+    a fresh boot assembles missing caches *before* the user opens the page,
+    so the first real request serves from cache in ~seconds. Each layer's
+    getter already short-circuits on a fresh cache, so warm boots are instant.
+    """
+    logger.info("lifespan: starting background reference-layer warm-up …")
+    warmup = asyncio.create_task(_warm_reference_caches())
+    try:
+        yield
+    finally:
+        if not warmup.done():
+            warmup.cancel()
+        await asyncio.gather(warmup, return_exceptions=True)
+
+
+async def _warm_reference_caches() -> None:
+    """Prefetch all five reference layers; a failing layer never aborts the rest.
+
+    Each getter reads its local cache first (fresh => no network), so on a warm
+    boot this only reads disk. On a cold boot it builds whatever is missing.
+    When every layer loads, the parsed shapely + STRtree reference index is
+    prebuilt too (spatial.register_reference_bundle) so the first live request
+    reuses it instead of paying the ~20-30 s parse. Exceptions are logged and
+    swallowed: warm-up is best-effort and must never crash server startup.
+    """
+
+    async def one(name: str, coro) -> dict | None:
+        try:
+            fc = await coro
+            logger.info(
+                "[warm-up] %s ready (%d features)",
+                name,
+                len(fc.get("features", [])),
+            )
+            return fc
+        except Exception as exc:  # noqa: BLE001 — best-effort, never crash boot
+            logger.warning("[warm-up] %s failed: %s", name, exc)
+            return None
+
+    industrial_fc, vegetation_fc, mining_fc, power_plants_fc, flares_fc = (
+        await asyncio.gather(
+            one("industrial", osm.get_industrial_zones()),
+            one("vegetation", osm.get_vegetation_zones()),
+            one("mining", osm.get_mining_zones()),
+            one("power-plants", powerplants.get_power_plants()),
+            one("flares", flares.get_flares()),
+        )
+    )
+
+    # Prebuild the parsed shapely + STRtree reference index so the first live
+    # /api/flagged-fires request after boot doesn't pay the ~20-30 s shape()
+    # parse over the ~150k vegetation polygons. Only register when all five
+    # layers are present — a partial bundle would silently mislabel fires, and
+    # the live request will rebuild it correctly from whatever it can load.
+    layers = (industrial_fc, vegetation_fc, power_plants_fc, flares_fc, mining_fc)
+    if all(fc is not None for fc in layers):
+        try:
+            spatial.register_reference_bundle(
+                _reference_cache_version(), *layers
+            )
+            logger.info("[warm-up] reference index prebuilt")
+        except Exception as exc:  # noqa: BLE001 — index build is best-effort
+            logger.warning("[warm-up] reference index prebuild failed: %s", exc)
+    else:
+        logger.info(
+            "[warm-up] skipping reference index prebuild (a layer is missing)"
+        )
+
+
 app = FastAPI(
     title="SIH26162 Industrial Fire Detection",
     description="Live industrial fire + persistent thermal source detection using NASA FIRMS and OSM.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

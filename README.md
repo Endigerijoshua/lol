@@ -32,6 +32,21 @@ Tech: Python / FastAPI · Leaflet.js · SQLite · Shapely / GeoPandas · scikit-
 
 5. Open http://localhost:8000 — API docs at http://localhost:8000/docs
 
+### Warm the caches ahead of a demo
+
+The OSM zone caches (industrial / vegetation / mining) are git-ignored and are
+rebuilt from the Overpass API on first use. On a fresh checkout the *first*
+dashboard load cold-builds them and can take a few minutes; the server also
+refreshes missing caches in the background automatically at startup. For a
+smooth demo, build them once in advance so the first page load is fast
+(~10 s, FIRMS-bound):
+
+```
+python scripts/build_zone_caches.py
+```
+
+Re-running is a no-op while the caches are fresh (720 h TTL).
+
 ## Endpoints
 
 | Route         | Description                                                    |
