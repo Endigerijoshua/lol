@@ -281,6 +281,31 @@ def _build_reference_bundle(
     }
 
 
+def register_reference_bundle(
+    cache_version: str,
+    industrial_fc: dict,
+    vegetation_fc: dict,
+    power_plants_fc: dict,
+    flares_fc: dict,
+    mining_fc: dict,
+) -> dict:
+    """Prebuild and store the parsed reference-geometry bundle under a version.
+
+    Lets the server warm the (expensive) shapely + STRtree parse once at boot so
+    the first live request after a start reuses it instead of paying the ~30 s
+    rebuild over the ~150k-vegetation-polygon layer. Must be called with the
+    *same* fingerprint the live endpoints compute (`_reference_cache_version`)
+    and a complete set of layers — a partial bundle would silently mislabel.
+    Mirrors exactly what `annotate_fires` does on a cache miss.
+    """
+    bundle = _build_reference_bundle(
+        industrial_fc, vegetation_fc, power_plants_fc, flares_fc, mining_fc
+    )
+    _REFERENCE_CACHE.clear()  # only one live dataset in memory at a time
+    _REFERENCE_CACHE[cache_version] = bundle
+    return bundle
+
+
 def annotate_fires(
     fires_fc: dict,
     industrial_fc: dict,
