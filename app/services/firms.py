@@ -32,20 +32,16 @@ import httpx
 import pandas as pd
 from shapely.geometry import MultiPolygon, Point, Polygon, shape
 
-from ..config import get_settings
+from ..config import get_settings, settings
 
 logger = logging.getLogger(__name__)
 
-FIRMS_AREA_URL = (
-    "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{dataset}/{bbox}/{days}"
-)
+FIRMS_AREA_URL = settings.firms_area_url
 
 # Natural Earth 10m admin-0 boundary for India (public domain). Contains islands
 # (Andaman & Nicobar) as extra polygons. 110m was tried first but is too coarse:
 # it drops the NE border states and the island territories.
-INDIA_BOUNDARY_FILE = (
-    Path(__file__).resolve().parent.parent / "data" / "india_boundary.geojson"
-)
+INDIA_BOUNDARY_FILE = Path(__file__).resolve().parent.parent / "data" / "india_boundary.geojson"
 
 # Fields copied verbatim from each FIRMS CSV row onto the GeoJSON feature.
 PROPERTY_FIELDS = (
@@ -75,9 +71,7 @@ def build_url(api_key: str, dataset: str, bbox: str, days: int) -> str:
         raise ValueError("FIRMS_MAP_KEY is not set. Add it to .env (see .env.example).")
     parsed = parse_bbox(bbox)
     bbox_comma = ",".join(str(v) for v in parsed)
-    return FIRMS_AREA_URL.format(
-        key=api_key, dataset=dataset, bbox=bbox_comma, days=days
-    )
+    return FIRMS_AREA_URL.format(key=api_key, dataset=dataset, bbox=bbox_comma, days=days)
 
 
 def _json_value(value):
@@ -141,8 +135,7 @@ def filter_to_india_boundary(fc: dict, buffer_deg: float | None = None) -> dict:
     dropped = total - len(kept)
     if dropped:
         logger.info(
-            "India boundary filter dropped %s of %s FIRMS detections "
-            "(outside India polygon)",
+            "India boundary filter dropped %s of %s FIRMS detections (outside India polygon)",
             dropped,
             total,
         )
@@ -213,7 +206,7 @@ async def fetch_fires(
 
     closer = False
     if client is None:
-        client = httpx.AsyncClient(timeout=60.0)
+        client = httpx.AsyncClient(timeout=settings.firms_request_timeout_seconds)
         closer = True
     try:
         response = await client.get(url)

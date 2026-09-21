@@ -10,12 +10,16 @@ Fields added to each fire's properties:
 - `summary_persistent` — only when `persistent_thermal_source`; a recurrence note
 - `summary` — headline + detail + (persistent note), the string used on the UI
 - `summary_icon` — emoji hint for the frontend
+- `summary_risk` — only when `directional_risk`; a Directional Risk Indicator
+  line ("…Estimated spread direction (heuristic)…")
 - `explanation` — one-line "why we think this" (the rule that fired)
 """
 
 import logging
+import time
 
 from ..config import settings
+from .risk import cardinal
 from .spatial import (
     MINING_BUFFER_METERS,
     NEAR_BUFFER_METERS,
@@ -68,11 +72,7 @@ def _industrial_detail(props: dict) -> str:
     if source == "power_plant_db" and plant_name:
         return f"\u2248{_format_distance(props.get('power_plant_distance_m'))} from the {plant_name} power plant"
     if source == "both":
-        suffix = (
-            f" and the {plant_name} power plant"
-            if plant_name
-            else " and a mapped power plant"
-        )
+        suffix = f" and the {plant_name} power plant" if plant_name else " and a mapped power plant"
         return base + suffix
     return base
 
@@ -105,9 +105,7 @@ def _explanation(props: dict) -> str:
     if rule == "industrial":
         if source == "power_plant_db":
             what = (
-                f"the {plant_name} power plant (WRI)"
-                if plant_name
-                else "a mapped WRI power plant"
+                f"the {plant_name} power plant (WRI)" if plant_name else "a mapped WRI power plant"
             )
         elif source == "both":
             what = (
@@ -155,17 +153,46 @@ def _persistent_note(props: dict, rule: str) -> str:
     )
 
 
+def _fmt_metric(value, suffix: str = "") -> str:
+    """Compact number formatting that tolerates None values."""
+    if value is None:
+        return "\u2014"
+    return f"{value:g}{suffix}"
+
+
+def _direction_note(props: dict) -> str | None:
+    """Plain-language directional-risk line (only when a cone was computed).
+
+    The exact labels "Directional Risk Indicator" and "Estimated spread
+    direction (heuristic)" are mandated by the product brief — never reword
+    them into "prediction" / "predicted path".
+    """
+    risk = props.get("directional_risk")
+    if not risk:
+        return None
+    weather = risk.get("weather") or {}
+    detail = (
+        f"wind {_fmt_metric(weather.get('wind_speed_kmh'))} km/h from "
+        f"{_fmt_metric(weather.get('wind_direction_deg'), '°')}"
+    )
+    if _fmt_metric(weather.get("temperature_c")) != "\u2014":
+        detail += f", {_fmt_metric(weather.get('temperature_c'), '°C')}"
+    if _fmt_metric(weather.get("humidity_pct")) != "\u2014":
+        detail += f", {_fmt_metric(weather.get('humidity_pct'), '%')} humidity"
+    return (
+        f"Directional Risk Indicator — Estimated spread direction "
+        f"(heuristic): toward {cardinal(risk.get('spread_direction_deg'))}; "
+        f"{detail}. Not a validated fire-behavior model."
+    )
+
+
 def add_summary(fires_fc: dict) -> dict:
     """Add the plain-language `summary`, `explanation` and helpers to every fire.
 
     Mutates and returns the input FeatureCollection.
     """
-    import time as _time
-
-    _t0 = _time.perf_counter()
-    logger.info(
-        "summary.add_summary: START (%d fires)", len(fires_fc.get("features", []))
-    )
+    _t0 = time.perf_counter()
+    logger.info("summary.add_summary: START (%d fires)", len(fires_fc.get("features", [])))
     for feature in fires_fc["features"]:
         prop = feature["properties"]
         rule = prop.get("fire_type_rule")
@@ -192,17 +219,25 @@ def add_summary(fires_fc: dict) -> dict:
         if prop.get("persistent_thermal_source"):
             persistent = _persistent_note(prop, rule)
 
+        unregistered = ""
+        if prop.get("unregistered_persistent"):
+            unregistered = "Unregistered \u2014 no known facility match (WRI power-plant database)."
+
         prop["summary_headline"] = headline
         prop["summary_detail"] = detail
         prop["summary_icon"] = ICONS[rule]
-        prop["summary"] = f"{headline} \u2014 {detail}" + (
-            f" {persistent}" if persistent else ""
+        prop["summary_unregistered"] = unregistered or None
+        prop["summary_risk"] = _direction_note(prop)
+        prop["summary"] = (
+            f"{headline} \u2014 {detail}"
+            + (f" {persistent}" if persistent else "")
+            + (f" {unregistered}" if unregistered else "")
         )
         prop["summary_persistent"] = persistent or None
         prop["explanation"] = _explanation(prop)
     logger.info(
         "summary.add_summary: END (%d fires in %.2fs)",
         len(fires_fc.get("features", [])),
-        _time.perf_counter() - _t0,
+        time.perf_counter() - _t0,
     )
     return fires_fc

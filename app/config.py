@@ -20,9 +20,7 @@ def repo_path(name: str | Path) -> Path:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=str(REPO_ROOT / ".env"), env_file_encoding="utf-8"
-    )
+    model_config = SettingsConfigDict(env_file=str(REPO_ROOT / ".env"), env_file_encoding="utf-8")
 
     firms_map_key: str = ""
     firms_dataset: str = "VIIRS_SNPP_NRT"
@@ -63,6 +61,39 @@ class Settings(BaseSettings):
     power_plants_cache_max_age_hours: int = 720
     flares_cache_file: str = "flares_cache.json"
     flares_cache_max_age_hours: int = 720
+    risk_frp_threshold_mw: float = 10.0
+    risk_cone_min_length_m: int = 500
+    risk_cone_max_length_m: int = 5000
+    risk_wind_speed_max_kmh: float = 60.0
+    risk_cone_min_half_angle_deg: int = 10
+    risk_cone_max_half_angle_deg: int = 45
+    risk_vegetation_distance_m: int = 1000
+    weather_cache_ttl_seconds: int = 600
+    # Buffer distances (meters) for spatial classification rules
+    near_buffer_meters: int = 1000
+    vegetation_buffer_meters: int = 3000
+    flare_buffer_meters: int = 2000
+    mining_buffer_meters: int = 1000
+    search_radius_meters: int = 20000
+    # Overpass mirror list and retry policy
+    overpass_urls: list[str] = [
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass-api.de/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    overpass_retries: int = 1
+    overpass_retry_backoff_seconds: float = 2.0
+    overpass_request_timeout_seconds: float = 12.0
+    # HTTP timeouts for external data fetches
+    firms_request_timeout_seconds: float = 60.0
+    external_request_timeout_seconds: float = 120.0
+    # FIRMS CSV area API URL template
+    firms_area_url: str = (
+        "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{dataset}/{bbox}/{days}"
+    )
 
 
 @lru_cache

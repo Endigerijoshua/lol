@@ -18,12 +18,13 @@ exactly the same numbers.
 """
 
 import logging
+import time
 from functools import lru_cache
-from pathlib import Path
 
 import joblib
 import numpy as np
 
+from ..config import repo_path
 from . import spatial
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ FEATURE_COLUMNS = (
     "occurrence_count",
 )
 
-MODEL_FILE = Path(__file__).resolve().parents[2] / "models" / "fire_classifier.pkl"
+MODEL_FILE = repo_path("models/fire_classifier.pkl")
 
 _CONFIDENCE_ENCODING = {"l": 0, "n": 1, "h": 2, "low": 0, "nominal": 1, "high": 2}
 _DAYNIGHT_ENCODING = {"N": 0, "D": 1}
@@ -110,8 +111,7 @@ def load_model():
     """Load the trained classifier once per process, cached afterwards."""
     if not MODEL_FILE.exists():
         raise ModelNotAvailable(
-            f"trained model not found at {MODEL_FILE}. "
-            "Run scripts/train_classifier.py first."
+            f"trained model not found at {MODEL_FILE}. Run scripts/train_classifier.py first."
         )
     model = joblib.load(MODEL_FILE)
     logger.info("loaded fire classifier from %s", MODEL_FILE)
@@ -162,19 +162,16 @@ def annotate_fire_type_ml(features_fc: dict) -> dict:
             feature["properties"]["fire_type_ml_confidence"] = None
         return features_fc
 
-    import time as _time
-
-    _t0 = _time.perf_counter()
+    _t0 = time.perf_counter()
     logger.info(
         "ml.annotate_fire_type_ml: START (%d fires)",
         len(features_fc.get("features", [])),
     )
-    samples = np.vstack(
-        [
-            features_from_props(feature["properties"])
-            for feature in features_fc["features"]
-        ]
-    )
+    features = features_fc["features"]
+    if not features:
+        logger.info("ml.annotate_fire_type_ml: no fires to classify")
+        return features_fc
+    samples = np.vstack([features_from_props(feature["properties"]) for feature in features])
     probas = model.predict_proba(samples)
     classes = np.asarray(model.classes_)
     for feature, probs in zip(features_fc["features"], probas):
@@ -184,6 +181,6 @@ def annotate_fire_type_ml(features_fc: dict) -> dict:
     logger.info(
         "ml.annotate_fire_type_ml: END (%d fires in %.2fs)",
         len(features_fc.get("features", [])),
-        _time.perf_counter() - _t0,
+        time.perf_counter() - _t0,
     )
     return features_fc

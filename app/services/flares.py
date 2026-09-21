@@ -27,9 +27,7 @@ from ..config import repo_path, settings
 
 logger = logging.getLogger(__name__)
 
-FLARES_URL = (
-    "https://eogdata.mines.edu/global_flare_data/2024_flare_summary_v20250730_j01.kml"
-)
+FLARES_URL = "https://eogdata.mines.edu/global_flare_data/2024_flare_summary_v20250730_j01.kml"
 CATALOG_YEAR = 2024
 _NS = "{http://www.opengis.net/kml/2.2}"
 
@@ -132,7 +130,10 @@ async def fetch_flares(client: httpx.AsyncClient | None = None) -> dict:
     logger.info("downloading VNF flare KML: %s", FLARES_URL)
     closer = False
     if client is None:
-        client = httpx.AsyncClient(timeout=120.0, follow_redirects=True)
+        client = httpx.AsyncClient(
+            timeout=settings.external_request_timeout_seconds,
+            follow_redirects=True,
+        )
         closer = True
     try:
         response = await client.get(FLARES_URL)

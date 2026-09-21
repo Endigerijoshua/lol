@@ -45,7 +45,7 @@ def db_path() -> str:
 
 def today() -> dt.date:
     """UTC date, used as the reference point for persistence lookback windows."""
-    return dt.datetime.now(dt.timezone.utc).date()
+    return dt.datetime.now(dt.UTC).date()
 
 
 @contextmanager
@@ -85,10 +85,86 @@ def record_featurecollection(fc: dict) -> int:
                 props.get("frp"),
                 props.get("satellite"),
                 props.get("daynight"),
-                dt.datetime.now(dt.timezone.utc).isoformat(),
+                dt.datetime.now(dt.UTC).isoformat(),
             )
         )
     return _insert_many(rows)
+
+
+def _feature_key(lat: float, lon: float, acq_date: str, acq_time, satellite) -> tuple:
+    """Dedup key mirroring the fire_history UNIQUE constraint."""
+    return (float(lat), float(lon), str(acq_date), acq_time, satellite)
+
+
+def existing_feature_keys(fc: dict) -> set[tuple]:
+    """Subset of `fc`'s dedup keys that are already present in fire_history.
+
+    Used to mark "new since last refresh": a detection is new when its key is
+    NOT already stored before this fetch is recorded.
+    """
+    want = []
+    for feature in fc.get("features", []):
+        props = feature.get("properties") or {}
+        geom = feature.get("geometry") or {}
+        coords = geom.get("coordinates")
+        if coords and props.get("acq_date"):
+            lon, lat = coords[0], coords[1]
+            if lon is None or lat is None:
+                continue
+            want.append(
+                _feature_key(
+                    lat,
+                    lon,
+                    props["acq_date"],
+                    props.get("acq_time"),
+                    props.get("satellite"),
+                )
+            )
+    if not want:
+        return set()
+    found: set[tuple] = set()
+    with get_connection() as conn:
+        for lat, lon, acq_date, acq_time, satellite in want:
+            row = conn.execute(
+                """
+                SELECT 1 FROM fire_history
+                WHERE latitude = ? AND longitude = ?
+                  AND acq_date = ? AND acq_time IS ? AND satellite IS ?
+                """,
+                (lat, lon, acq_date, acq_time, satellite),
+            ).fetchone()
+            if row:
+                found.add((lat, lon, acq_date, acq_time, satellite))
+    return found
+
+
+def annotate_new_since_last_refresh(fc: dict) -> dict:
+    """Set `is_new_since_last_refresh` on every feature before it is recorded.
+
+    A detection is "new" when it is not already present in fire_history — i.e.
+    it appeared since the previous refresh/fetch of the feed. Call this BEFORE
+    `record_featurecollection` so the comparison is against the prior snapshot.
+    Mutates and returns the input FeatureCollection.
+    """
+    existing = existing_feature_keys(fc)
+    for feature in fc.get("features", []):
+        props = feature.get("properties") or {}
+        geom = feature.get("geometry") or {}
+        coords = geom.get("coordinates")
+        is_new = False
+        if coords and props.get("acq_date"):
+            lon, lat = coords[0], coords[1]
+            if lon is not None and lat is not None:
+                key = _feature_key(
+                    lat,
+                    lon,
+                    props["acq_date"],
+                    props.get("acq_time"),
+                    props.get("satellite"),
+                )
+                is_new = key not in existing
+        props["is_new_since_last_refresh"] = is_new
+    return fc
 
 
 def _insert_many(rows: list[tuple]) -> int:
@@ -110,9 +186,7 @@ def _insert_many(rows: list[tuple]) -> int:
     return inserted
 
 
-def distinct_days_near(
-    lat: float, lon: float, radius_m: float, lookback_days: int
-) -> list[str]:
+def distinct_days_near(lat: float, lon: float, radius_m: float, lookback_days: int) -> list[str]:
     """Distinct acq_dates of past detections within `radius_m` of (lat, lon).
 
     A coarse degree-based bounding box filters in SQL, then the exact
@@ -174,8 +248,5 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
-    a = (
-        math.sin(d_phi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    )
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return 2 * radius * math.asin(math.sqrt(a))

@@ -26,6 +26,7 @@ const CONFIDENCE_COLORS = {
 const CONFIDENCE_LABELS = { h: "high", n: "nominal", l: "low" };
 
 const CATEGORY_ORDER = [
+  "unregistered",
   "persistent",
   "flare",
   "industrial",
@@ -35,6 +36,7 @@ const CATEGORY_ORDER = [
 ];
 
 const CATEGORY_TITLES = {
+  unregistered: "Unregistered Persistent Sources",
   persistent: "Persistent Thermal Sources",
   flare: "Gas-Flare Fires",
   industrial: "Industrial Fires & Power Plants",
@@ -45,6 +47,7 @@ const CATEGORY_TITLES = {
 
 /* Category accent colors for the map markers (mirror of the CSS palette). */
 const CATEGORY_COLORS = {
+  unregistered: "#c14953",
   persistent: "#b4532a",
   flare: "#94a3b8",
   industrial: "#475569",
@@ -58,13 +61,64 @@ const POWER_PLANT_COLOR = "#64748b";
 const FLARE_COLOR = "#94a3b8";
 const MINING_COLOR = "#475569";
 
-// GIBS WAITS ~1 day to publish true-color; use yesterday so tiles always exist.
-const GIBS_DATE = new Date(Date.now() - 24 * 3600 * 1000)
-  .toISOString()
-  .slice(0, 10);
-const GIBS_BASE_URL =
-  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/" +
-  GIBS_DATE +
+/* Directional Risk Indicator (heuristic, opt-in overlay). */
+const RISK_TIER_COLORS = { high: "#c14953", medium: "#d48b3a", low: "#8b96a3" };
+let riskEnabled = false;
+const riskLayers = new Map(); // feature.id -> [coneLayer, arrowMarker]
+
+// GIBS publishes with ~1 d of lag and a given date can have a missing granule
+// over India (observed 404s from the WMTS for some dates). Instead of pinning
+// "yesterday", probe the last 7 days and pick the newest date whose India-region
+// tiles at a representative zoom (z5) actually return 200; null if none do.
+function probeTile(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+}
+
+function pickGIBSDate() {
+  const probes = async (date) => {
+    const layers = [
+      "MODIS_Terra_CorrectedReflectance_TrueColor",
+      "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+    ];
+    const results = [];
+    for (const layer of layers) {
+      for (const tile of ["5/13/23", "5/12/22"]) {
+        results.push(
+          probeTile(
+            "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/" +
+              layer +
+              "/default/" +
+              date +
+              "/GoogleMapsCompatible_Level9/" +
+              tile +
+              ".jpg",
+          ),
+        );
+      }
+    }
+    return (await Promise.all(results)).every(Boolean);
+  };
+  return (async function loop() {
+    for (let i = 1; i <= 7; i++) {
+      const date = new Date(Date.now() - i * 24 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      if (await probes(date)) return date;
+    }
+    return null;
+  })();
+}
+
+const GIBS_TILE_URL = (layer, date) =>
+  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/" +
+  layer +
+  "/default/" +
+  date +
   "/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg";
 
 const map = L.map("map").setView([22, 79], 5);
@@ -73,18 +127,6 @@ const osmTile = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
   attribution: "&copy; OpenStreetMap contributors",
   maxZoom: 18,
 }).addTo(map);
-
-const gibsMODIS = L.tileLayer(
-  GIBS_BASE_URL.replace(
-    "{layer}",
-    "MODIS_Terra_CorrectedReflectance_TrueColor",
-  ),
-  { maxNativeZoom: 9, maxZoom: 18, attribution: "Imagery &copy; NASA GIBS" },
-);
-const gibsVIIRS = L.tileLayer(
-  GIBS_BASE_URL.replace("{layer}", "VIIRS_SNPP_CorrectedReflectance_TrueColor"),
-  { maxNativeZoom: 9, maxZoom: 18, attribution: "Imagery &copy; NASA GIBS" },
-);
 
 const zoneLayer = L.geoJSON(null, {
   style: {
@@ -166,17 +208,42 @@ const miningLayer = L.geoJSON(null, {
   },
 });
 
-L.control
+// Default base layer is OpenStreetMap (added above). GIBS satellite layers are
+// strictly opt-in: they are only listed here in the toggle (never auto-selected).
+// Because GIBS lags ~1 d and a date can lack an India granule (404 tiles → black
+// gaps), pick the newest date with verified India coverage, then register both
+// GIBS layers against it. If none is found the toggle is simply omitted.
+const layerControl = L.control
   .layers(
     {
       OpenStreetMap: osmTile,
-      "NASA GIBS true-color (MODIS)": gibsMODIS,
-      "NASA GIBS true-color (VIIRS)": gibsVIIRS,
     },
     null,
     { collapsed: true, position: "topright" },
   )
   .addTo(map);
+
+(async () => {
+  const date = await pickGIBSDate();
+if (!date) {
+     return null;
+   }
+  const attribution = "Imagery &copy; NASA GIBS";
+  layerControl.addBaseLayer(
+    L.tileLayer(
+      GIBS_TILE_URL("MODIS_Terra_CorrectedReflectance_TrueColor", date),
+      { maxNativeZoom: 9, maxZoom: 18, attribution },
+    ),
+    "NASA GIBS true-color (MODIS)",
+  );
+  layerControl.addBaseLayer(
+    L.tileLayer(
+      GIBS_TILE_URL("VIIRS_SNPP_CorrectedReflectance_TrueColor", date),
+      { maxNativeZoom: 9, maxZoom: 18, attribution },
+    ),
+    "NASA GIBS true-color (VIIRS)",
+  );
+})();
 
 /* One Leaflet layer group per fire category. Toggling a tab = show/hide the
    whole group, never touching individual markers. */
@@ -258,14 +325,183 @@ function formatTime(acqDate, acqTime) {
   return `${acqDate} ${time.slice(0, 2)}:${time.slice(2)} UTC`;
 }
 
+function formatFrp(frp) {
+  if (frp == null || !isFinite(frp)) return "—";
+  return `${Number(frp).toFixed(1)} MW`;
+}
+
+/* ---- Directional Risk Indicator helpers ---- */
+
+function cardinal(deg) {
+  if (deg == null || !isFinite(deg)) return "—";
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return dirs[Math.round((((Number(deg) % 360) + 360) % 360) / 45) % 8];
+}
+
+function fmtDeg(deg) {
+  if (deg == null || !isFinite(deg)) return "—";
+  return `${Math.round(Number(deg))}° ${cardinal(deg)}`;
+}
+
+function fmtKmh(kmh) {
+  if (kmh == null || !isFinite(kmh)) return "—";
+  return `${Math.round(Number(kmh))} km/h`;
+}
+
+function riskTierColor(tier) {
+  return RISK_TIER_COLORS[tier] || RISK_TIER_COLORS.low;
+}
+
+/* Rotated wind arrow (points in the estimated spread direction) + speed. */
+function windArrowSvg(spreadDeg, speedKmh) {
+  const num =
+    speedKmh == null || !isFinite(speedKmh)
+      ? ""
+      : `<div class="wind-num">${Math.round(Number(speedKmh))}</div>`;
+  return (
+    `<div class="wind-arrow" title="Directional Risk Indicator \u00b7 wind ` +
+    `${fmtKmh(speedKmh)} (arrow = estimated spread direction, heuristic)">` +
+    `<svg width="26" height="26" viewBox="0 0 26 26" style="display:block;` +
+    `transform:rotate(${spreadDeg}deg);transform-origin:50% 50%">` +
+    `<path d="M13 1 L21 15 L15.5 15 L15.5 25 L10.5 25 L10.5 15 L5 15 Z" fill="#334155"/>` +
+    `</svg>${num}</div>`
+  );
+}
+
+/* Human-friendly risk note shown in every card + popup. */
+function riskBlockHtml(props) {
+  const r = props.directional_risk;
+  if (!r) return "";
+  const w = r.weather || {};
+  const tip =
+    "Estimated spread direction (heuristic) \u2014 based on current wind, " +
+    "nearby vegetation density and temperature/humidity dryness. This is " +
+    "NOT a validated fire-behavior model.";
+  return (
+    `<div class="risknote" title="${tip}">` +
+    `<span class="risk-title">\u{1F9ED} Directional Risk Indicator</span>` +
+    ` \u00b7 spread toward ${fmtDeg(r.spread_direction_deg)} (heuristic)<br>` +
+    `<span class="risk-meta">risk ${Number(r.risk_score).toFixed(2)} ` +
+    `(${r.risk_tier || "low"}) \u00b7 wind ${fmtKmh(w.wind_speed_kmh)} from ` +
+    `${fmtDeg(w.wind_direction_deg)}</span>` +
+    `</div>`
+  );
+}
+
+/* Draw the cone + wind arrow for one fire into its category group. */
+function renderRiskForFire(feature, group) {
+  const props = feature.properties || {};
+  const risk = props.directional_risk;
+  if (!risk) return;
+  const coords = feature.geometry && feature.geometry.coordinates;
+  if (!coords || !risk.geometry) return;
+  const [lon, lat] = coords;
+  const w = risk.weather || {};
+
+  const cone = L.geoJSON(null, {
+    className: "risk-cones",
+    style: {
+      color: riskTierColor(risk.risk_tier),
+      weight: 1,
+      fillColor: riskTierColor(risk.risk_tier),
+      fillOpacity: 0.2,
+      dashArray: "4 4",
+    },
+    interactive: false,
+  });
+  cone.addData({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", geometry: risk.geometry, properties: {} }],
+  });
+  cone.addTo(group);
+
+  const arrow = L.marker([lat, lon], {
+    icon: L.divIcon({
+      className: "wind-arrow-icon",
+      html: windArrowSvg(risk.spread_direction_deg || 0, w.wind_speed_kmh),
+      iconSize: [30, 34],
+      iconAnchor: [15, 15],
+    }),
+    keyboard: false,
+    zIndexOffset: 900,
+  }).bindPopup(firePopupContent(props));
+  arrow.addTo(group);
+
+  riskLayers.set(feature.id, [cone, arrow]);
+}
+
+function resetRiskLayers() {
+  for (const layers of riskLayers.values()) {
+    for (const layer of layers) layer.remove();
+  }
+  riskLayers.clear();
+}
+
+/* Toggle the risk overlay without touching markers/sidebar. */
+function syncRiskLayers() {
+  if (!cache.firesFC) return;
+  resetRiskLayers();
+  if (!riskEnabled) return;
+  for (const feature of cache.firesFC.features || []) {
+    const cat = fireCategory(feature.properties || {});
+    renderRiskForFire(feature, fireGroups[cat]);
+  }
+}
+
+/* FIRMS `acq_time` is a UTC HHMM integer (2400 = midnight, next day). */
+function acqTimestamp(acqDate, acqTime) {
+  if (!acqDate) return null;
+  const raw = String(acqTime == null ? "0" : acqTime);
+  const t = raw.padStart(4, "0");
+  let h = parseInt(t.slice(0, 2), 10) || 0;
+  const m = parseInt(t.slice(2, 4), 10) || 0;
+  const ts = new Date(acqDate + "T00:00:00Z");
+  if (h === 24) {
+    h = 0;
+    ts.setUTCDate(ts.getUTCDate() + 1);
+  }
+  ts.setUTCHours(h, m, 0, 0);
+  return ts.getTime();
+}
+
+const FRESH_MS = 30 * 60 * 1000; // under 30 min = "fresh" accent
+
+function timeSinceText(ms) {
+  if (ms == null) return "—";
+  const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const d = Math.floor(hr / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+/* Re-compute every relative age on screen (sidebar + open popup) live. */
+function refreshAges() {
+  document.querySelectorAll(".age").forEach((el) => {
+    const ts = acqTimestamp(el.dataset.acqDate, el.dataset.acqTime);
+    if (ts == null) {
+      el.textContent = "—";
+      el.classList.remove("fresh");
+      return;
+    }
+    el.textContent = timeSinceText(ts);
+    el.classList.toggle("fresh", Date.now() - ts < FRESH_MS);
+  });
+}
+
 /* Single category per fire; the sidebar and map both use this. */
 function fireCategory(props) {
+  if (props.unregistered_persistent) return "unregistered";
   if (props.persistent_thermal_source) return "persistent";
   if (props.gas_flare) return "flare";
   const t = props.fire_type_rule || "other_natural";
   if (t === "industrial" || props.near_industrial) return "industrial";
   if (t === "mining" || props.near_mining) return "mining";
-  if (t === "forest") return "forest";
+  // Backend invariant: near_vegetation ⇒ forest (unless industrial/mining won).
+  if (t === "forest" || props.near_vegetation) return "forest";
   return "other_natural";
 }
 
@@ -273,7 +509,7 @@ function fireKvHtml(props) {
   const rows = [
     ["Confidence", confidenceLabel(props.confidence)],
     ["Brightness", props.bright_ti4 != null ? `${props.bright_ti4} K` : "—"],
-    ["FRP", props.frp != null ? `${props.frp} MW` : "—"],
+    ["FRP", formatFrp(props.frp)],
     ["Observed", formatTime(props.acq_date, props.acq_time)],
     ["Satellite", props.satellite || "—"],
     ["Day/night", props.daynight || "—"],
@@ -299,6 +535,33 @@ function fireKvHtml(props) {
   if (props.persistent_thermal_source) {
     rows.push(["Occurrences", `${props.occurrence_count} days / 14`]);
   }
+  if (props.directional_risk) {
+    const r = props.directional_risk;
+    const w = r.weather || {};
+    rows.push([
+      "Directional Risk Indicator",
+      "Estimated spread direction (heuristic) — wind/vegetation/dryness blend, not a validated fire-behavior model.",
+    ]);
+    rows.push([
+      "Risk (heuristic)",
+      `${Number(r.risk_score).toFixed(2)} ${r.risk_tier || "low"}`,
+    ]);
+    rows.push(["Spread toward", fmtDeg(r.spread_direction_deg)]);
+    rows.push(["Cone length", formatDistance(r.cone_length_m)]);
+    rows.push([
+      "Cone half-angle",
+      r.cone_half_angle_deg != null ? `${r.cone_half_angle_deg}°` : "—",
+    ]);
+    rows.push([
+      "Wind",
+      `${fmtKmh(w.wind_speed_kmh)} from ${fmtDeg(w.wind_direction_deg)}`,
+    ]);
+    rows.push([
+      "Temperature",
+      w.temperature_c != null ? `${w.temperature_c}°C` : "—",
+    ]);
+    rows.push(["Humidity", w.humidity_pct != null ? `${w.humidity_pct}%` : "—"]);
+  }
   return rows.map(([k, v]) => `<div><b>${k}:</b> ${v}</div>`).join("");
 }
 
@@ -310,13 +573,32 @@ function fireVerdictHtml(props) {
   const persistent = props.summary_persistent
     ? `<div class="persist">${props.summary_persistent}</div>`
     : "";
+  const unreg = props.summary_unregistered
+    ? `<div class="unreg">\u{1F6A8} ${props.summary_unregistered}</div>`
+    : "";
   const reason = props.explanation
     ? `<div class="reason">${props.explanation}</div>`
     : "";
+  const frpEl =
+    props.frp != null && isFinite(props.frp)
+      ? `<span class="frp">FRP <b>${formatFrp(props.frp)}</b></span>`
+      : "";
+  const ageTs = acqTimestamp(props.acq_date, props.acq_time);
+  const ageEl =
+    ageTs == null
+      ? ""
+      : `<span class="age${Date.now() - ageTs < FRESH_MS ? " fresh" : ""}" ` +
+        `data-acq-date="${props.acq_date}" data-acq-time="${props.acq_time}">` +
+        `${timeSinceText(ageTs)}</span>`;
+  const meta = frpEl || ageEl ? `<div class="meta">${frpEl}${ageEl}</div>` : "";
+  const risk = riskBlockHtml(props);
   return (
     `<div class="verdict"><span class="badge badge-${cat}">${icon}</span>${headline}</div>` +
     detail +
+    meta +
+    risk +
     persistent +
+    unreg +
     reason +
     `<details><summary>Details</summary><div class="kv">${fireKvHtml(props)}</div></details>`
   );
@@ -338,16 +620,20 @@ function sitePopupContent(prop) {
 }
 
 function markerStyle(props) {
+  const isUnregistered = props.unregistered_persistent;
   const isPersistent = props.persistent_thermal_source;
   const cat = fireCategory(props);
-  const color = isPersistent
-    ? CATEGORY_COLORS.persistent
-    : CATEGORY_COLORS[cat] || CATEGORY_COLORS.other_natural;
+  const color = isUnregistered
+    ? CATEGORY_COLORS.unregistered
+    : isPersistent
+      ? CATEGORY_COLORS.persistent
+      : CATEGORY_COLORS[cat] || CATEGORY_COLORS.other_natural;
+  const big = isUnregistered || isPersistent;
   return {
-    radius: isPersistent ? 10 : (cat === "industrial" || cat === "flare" ? 7 : 5),
+    radius: big ? 10 : (cat === "industrial" || cat === "flare" ? 7 : 5),
     color: color,
     weight: isPersistent ? 2 : 1.5,
-    dashArray: isPersistent ? "4 4" : null,
+    dashArray: big ? "4 4" : null,
     fillColor: confidenceColor(props.confidence),
     fillOpacity: 0.85,
   };
@@ -356,6 +642,7 @@ function markerStyle(props) {
 function renderFireMarkers(features) {
   for (const g of Object.values(fireGroups)) g.clearLayers();
   fireMarkers.clear();
+  resetRiskLayers();
   for (const feature of features) {
     const [lon, lat] = feature.geometry.coordinates;
     const props = feature.properties || {};
@@ -368,6 +655,12 @@ function renderFireMarkers(features) {
       if (el) el.classList.add("marker-persistent");
     }
     fireMarkers.set(feature.id, marker);
+  }
+  if (riskEnabled) {
+    for (const feature of features) {
+      const cat = fireCategory(feature.properties || {});
+      renderRiskForFire(feature, fireGroups[cat]);
+    }
   }
   applyFireFilter();
 }
@@ -547,6 +840,35 @@ function applyFireFilter() {
   }
 }
 
+/* Show/hide sidebar category sections per the active filter checkboxes.
+   Sections are built once and only re-classed, so a checkbox toggle touches
+   zero DOM nodes — no rebuild, no count-up replay, no list fade. */
+function applySidebarFilter() {
+  if (currentView !== "detections") return;
+  let visible = 0;
+  for (const section of listEl.querySelectorAll(".cat-section")) {
+    const show =
+      selectedCategories.size > 0 && selectedCategories.has(section.dataset.cat);
+    section.classList.toggle("hidden", !show);
+    if (show) visible += 1;
+  }
+  let emptyEl = document.getElementById("list-empty");
+  if (visible === 0) {
+    if (!emptyEl) {
+      emptyEl = document.createElement("div");
+      emptyEl.id = "list-empty";
+      emptyEl.className = "empty";
+      listEl.appendChild(emptyEl);
+    }
+    emptyEl.textContent =
+      selectedCategories.size === 0
+        ? "Select a category to view detections."
+        : "No detections matching this filter.";
+  } else if (emptyEl) {
+    emptyEl.remove();
+  }
+}
+
 function renderDetectionsSidebar(features) {
   const buckets = {};
   for (const cat of CATEGORY_ORDER) buckets[cat] = [];
@@ -556,20 +878,27 @@ function renderDetectionsSidebar(features) {
     buckets[cat].push(f);
   }
 
-  const sorters = {
+  const priority = {
     persistent: (a, b) =>
       (b.properties.occurrence_count || 0) - (a.properties.occurrence_count || 0) ||
       (a.properties.distance_m || 99999) - (b.properties.distance_m || 99999),
+    unregistered: (a, b) =>
+      (b.properties.occurrence_count || 0) - (a.properties.occurrence_count || 0) ||
+      (b.properties.frp || 0) - (a.properties.frp || 0),
     flare: (a, b) => (a.properties.distance_to_flare || 99999) - (b.properties.distance_to_flare || 99999),
     industrial: (a, b) => (a.properties.distance_m || 99999) - (b.properties.distance_m || 99999),
     mining: (a, b) => (a.properties.distance_to_mining || 99999) - (b.properties.distance_to_mining || 99999),
     forest: (a, b) => (a.properties.vegetation_distance_m || 99999) - (b.properties.vegetation_distance_m || 99999),
     other_natural: (a, b) => (b.properties.frp || 0) - (a.properties.frp || 0),
   };
-  for (const cat of CATEGORY_ORDER) buckets[cat].sort(sorters[cat]);
+
+  function bucketSorter(cat) {
+    return priority[cat] || priority.other_natural;
+  }
+  for (const cat of CATEGORY_ORDER) buckets[cat].sort(bucketSorter(cat));
 
   const countElId = (cat) =>
-    ({ industrial: "ind", other_natural: "nat", persistent: "persist" })[cat] || cat;
+    ({ industrial: "ind", other_natural: "nat", persistent: "persist", unregistered: "unreg" })[cat] || cat;
 
   // Real data is here — replace the skeleton badges with live count-ups.
   clearSkeletonLoaders();
@@ -582,36 +911,26 @@ function renderDetectionsSidebar(features) {
 
   listEl.innerHTML = "";
 
-  const renderSection = (cat) => {
+  /* Build every category section once. Filter toggles only flip a `hidden`
+     class on these sections (applySidebarFilter) — they never re-create the
+     DOM, re-run the badge count-ups or re-play the list fade. */
+  for (const cat of CATEGORY_ORDER) {
     const items = buckets[cat];
-    if (items.length === 0) return;
-    listEl.appendChild(sectionTitle(CATEGORY_TITLES[cat], items.length));
-    for (const f of items) listEl.appendChild(buildEntry(f));
-  };
-
-  if (selectedCategories.size === 0) {
-    // Show nothing when no categories selected
-  } else {
-    for (const cat of CATEGORY_ORDER) {
-      if (selectedCategories.has(cat)) {
-        renderSection(cat);
-      }
-    }
+    if (items.length === 0) continue;
+    const section = document.createElement("div");
+    section.className = "cat-section";
+    section.dataset.cat = cat;
+    section.appendChild(sectionTitle(CATEGORY_TITLES[cat], items.length));
+    for (const f of items) section.appendChild(buildEntry(f));
+    listEl.appendChild(section);
   }
-
-  if (listEl.children.length === 0) {
-    const el = document.createElement("div");
-    el.className = "empty";
-    el.textContent = selectedCategories.size === 0
-      ? "Select a category to view detections."
-      : "No detections matching this filter.";
-    listEl.appendChild(el);
-  }
+  applySidebarFilter();
 
   fadeInList();
 
   return {
     total: features.length,
+    unregistered: buckets.unregistered.length,
     persistent: buckets.persistent.length,
     flare: buckets.flare.length,
     industrial: buckets.industrial.length,
@@ -624,12 +943,14 @@ function renderDetectionsSidebar(features) {
 function setSummaryCounts(counts) {
   summaryEl.innerHTML =
     `<span class="big" id="s-total">0</span> live hotspots &middot; ` +
+    `<span id="s-unreg">0</span> \u{1F6A8} unreg &middot; ` +
     `<span id="s-ind">0</span> \u{1F3ED} ind &middot; ` +
     `<span id="s-mining">0</span> \u{26CF}\uFE0F mining &middot; ` +
     `<span id="s-forest">0</span> \u{1F332} forest &middot; ` +
     `<span id="s-nat">0</span> \u{1F33E} agri &middot; ` +
     `<span id="s-persist">0</span> \u{1F534} persist`;
   animateCount(summaryEl.querySelector("#s-total"), counts.total);
+  animateCount(summaryEl.querySelector("#s-unreg"), counts.unregistered || 0);
   animateCount(summaryEl.querySelector("#s-ind"), counts.industrial);
   animateCount(summaryEl.querySelector("#s-mining"), counts.mining);
   animateCount(summaryEl.querySelector("#s-forest"), counts.forest);
@@ -676,6 +997,22 @@ function hideLayer(layer) {
   if (map.hasLayer(layer)) map.removeLayer(layer);
 }
 
+/* Render markers + sidebar + counts together so filters stay in sync. */
+function renderCurrentDetections() {
+  if (!cache.firesFC) return;
+  const features = cache.firesFC.features || [];
+  renderFireMarkers(features);
+  renderZones(cache.zonesFC);
+  renderPowerPlants(cache.powerFC);
+  renderFlareSites(cache.flaresFC);
+  renderMiningZones(cache.miningFC);
+  applyFireFilter();
+  // Sweep animation only on a fresh data load, never on a filter toggle.
+  triggerMapSweep();
+  const counts = renderDetectionsSidebar(features);
+  setSummaryCounts(counts);
+}
+
 async function loadDetections(force = false) {
   currentView = "detections";
   setViewButtons("detections");
@@ -694,15 +1031,7 @@ async function loadDetections(force = false) {
           fetchJson(MINING_URL),
         ]);
     }
-    const features = cache.firesFC.features || [];
-    renderFireMarkers(features);
-    renderZones(cache.zonesFC);
-    renderPowerPlants(cache.powerFC);
-    renderFlareSites(cache.flaresFC);
-    renderMiningZones(cache.miningFC);
-    applyFireFilter();
-    const counts = renderDetectionsSidebar(features);
-    setSummaryCounts(counts);
+    renderCurrentDetections();
     const ts = document.getElementById("live-ts");
     if (ts) ts.textContent = `FIRMS feed · ${new Date().toUTCString().slice(17, 25)} UTC`;
   } catch (err) {
@@ -822,11 +1151,8 @@ document.querySelectorAll("#category-filters input[type='checkbox']").forEach((c
     }
     updateFilterState();
     if (currentView === "detections") {
-      triggerMapSweep();
       applyFireFilter();
-      if (cache.firesFC && cache.firesFC.features) {
-        renderDetectionsSidebar(cache.firesFC.features);
-      }
+      applySidebarFilter();
     }
   });
 });
@@ -843,4 +1169,16 @@ document.getElementById("reload").addEventListener("click", () => {
   }
 });
 
+/* Directional Risk Indicator overlay: opt-in, never on by default. */
+const riskToggle = document.getElementById("risk-toggle");
+if (riskToggle) {
+  riskToggle.addEventListener("change", (e) => {
+    riskEnabled = e.target.checked;
+    if (currentView === "detections") syncRiskLayers();
+  });
+}
+
 loadDetections();
+
+/* Live update of the relative "time since detection" every 45 s, no reload. */
+setInterval(refreshAges, 45 * 1000);

@@ -105,9 +105,7 @@ def csv_to_geojson(csv_text: str) -> dict:
         props = {field: _json_value(row[field]) for field in PROPERTY_FIELDS}
         props["source"] = "power_plant_db"
         gppd_id = props.get("gppd_idnr")
-        feature_id = (
-            f"wri-pp-{gppd_id}" if gppd_id is not None else f"wri-pp-{len(features)}"
-        )
+        feature_id = f"wri-pp-{gppd_id}" if gppd_id is not None else f"wri-pp-{len(features)}"
         features.append(
             {
                 "type": "Feature",
@@ -120,9 +118,7 @@ def csv_to_geojson(csv_text: str) -> dict:
             }
         )
     if dropped:
-        logger.warning(
-            "dropped %s India power plant(s) with missing coordinates", dropped
-        )
+        logger.warning("dropped %s India power plant(s) with missing coordinates", dropped)
     logger.info("WRI power plant CSV -> GeoJSON: %s India plant(s)", len(features))
     return {"type": "FeatureCollection", "features": features}
 
@@ -132,7 +128,10 @@ async def fetch_power_plants(client: httpx.AsyncClient | None = None) -> dict:
     logger.info("downloading power plants CSV: %s", POWER_PLANTS_URL)
     closer = False
     if client is None:
-        client = httpx.AsyncClient(timeout=120.0, follow_redirects=True)
+        client = httpx.AsyncClient(
+            timeout=settings.external_request_timeout_seconds,
+            follow_redirects=True,
+        )
         closer = True
     try:
         response = await client.get(POWER_PLANTS_URL)

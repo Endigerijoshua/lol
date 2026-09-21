@@ -29,6 +29,7 @@ conversion.
 """
 
 import logging
+import time
 from functools import lru_cache
 
 import pyproj
@@ -37,13 +38,15 @@ from shapely.geometry import shape
 from shapely.ops import transform
 from shapely.strtree import STRtree
 
+from ..config import settings
+
 logger = logging.getLogger(__name__)
 
-NEAR_BUFFER_METERS = 1000
-VEGETATION_BUFFER_METERS = 3000
-FLARE_BUFFER_METERS = 2000
-MINING_BUFFER_METERS = 1000
-SEARCH_RADIUS_METERS = 20000
+NEAR_BUFFER_METERS = settings.near_buffer_meters
+VEGETATION_BUFFER_METERS = settings.vegetation_buffer_meters
+FLARE_BUFFER_METERS = settings.flare_buffer_meters
+MINING_BUFFER_METERS = settings.mining_buffer_meters
+SEARCH_RADIUS_METERS = settings.search_radius_meters
 _SEARCH_PAD_DEGREES = 0.3
 
 
@@ -73,9 +76,7 @@ def _utm_distance_meters(point, polygon: "object") -> float:
     return float(projected_polygon.distance(projected_point))
 
 
-def _nearest_distance_meters(
-    point, polygons: list, tree: STRtree | None = None
-) -> float | None:
+def _nearest_distance_meters(point, polygons: list, tree: STRtree | None = None) -> float | None:
     """Nearest distance (meters) from point to any polygon, or None if too far.
 
     `tree` may be prebuilt and reused across many points — building the STRtree
@@ -252,15 +253,9 @@ def _build_reference_bundle(
     mining_fc: dict,
 ) -> dict:
     """Parse the reference layers into shapely geometry + STRtree."""
-    industrial_polygons = [
-        shape(feature["geometry"]) for feature in industrial_fc["features"]
-    ]
-    vegetation_polygons = [
-        shape(feature["geometry"]) for feature in vegetation_fc["features"]
-    ]
-    power_plant_points = [
-        shape(feature["geometry"]) for feature in power_plants_fc["features"]
-    ]
+    industrial_polygons = [shape(feature["geometry"]) for feature in industrial_fc["features"]]
+    vegetation_polygons = [shape(feature["geometry"]) for feature in vegetation_fc["features"]]
+    power_plant_points = [shape(feature["geometry"]) for feature in power_plants_fc["features"]]
     flare_points = [shape(feature["geometry"]) for feature in flares_fc["features"]]
     mining_features = mining_fc["features"]
     mining_polygons = [shape(feature["geometry"]) for feature in mining_features]
@@ -347,15 +342,9 @@ def annotate_fires(
         flare_tree = bundle["flare_tree"]
         mining_tree = bundle["mining_tree"]
     else:
-        industrial_polygons = [
-            shape(feature["geometry"]) for feature in industrial_fc["features"]
-        ]
-        vegetation_polygons = [
-            shape(feature["geometry"]) for feature in vegetation_fc["features"]
-        ]
-        power_plant_points = [
-            shape(feature["geometry"]) for feature in power_plants_fc["features"]
-        ]
+        industrial_polygons = [shape(feature["geometry"]) for feature in industrial_fc["features"]]
+        vegetation_polygons = [shape(feature["geometry"]) for feature in vegetation_fc["features"]]
+        power_plant_points = [shape(feature["geometry"]) for feature in power_plants_fc["features"]]
         flare_features = flares_fc["features"]
         flare_points = [shape(feature["geometry"]) for feature in flare_features]
         mining_features = mining_fc["features"]
@@ -366,9 +355,7 @@ def annotate_fires(
         flare_tree = STRtree(flare_points) if flare_points else None
         mining_tree = STRtree(mining_polygons) if mining_polygons else None
 
-    import time as _time
-
-    _t0 = _time.perf_counter()
+    _t0 = time.perf_counter()
     logger.info(
         "spatial.annotate_fires: START (%d fires; %d industrial, %d vegetation, %d power plants, %d flares, %d mining)",
         len(fires_fc.get("features", [])),
@@ -400,9 +387,7 @@ def annotate_fires(
         if point is None:
             continue
 
-        industrial_distance = _nearest_distance_meters(
-            point, industrial_polygons, industrial_tree
-        )
+        industrial_distance = _nearest_distance_meters(point, industrial_polygons, industrial_tree)
         power_plant_distance, power_plant_props = _nearest_power_plant(
             point,
             power_plants_fc["features"],
@@ -418,12 +403,10 @@ def annotate_fires(
             prop["distance_m"] = round(power_plant_distance, 1)
 
         near_osm_industrial = (
-            industrial_distance is not None
-            and industrial_distance <= NEAR_BUFFER_METERS
+            industrial_distance is not None and industrial_distance <= NEAR_BUFFER_METERS
         )
         near_power_plant = (
-            power_plant_distance is not None
-            and power_plant_distance <= NEAR_BUFFER_METERS
+            power_plant_distance is not None and power_plant_distance <= NEAR_BUFFER_METERS
         )
         prop["near_power_plant"] = near_power_plant
         prop["near_industrial"] = near_osm_industrial or near_power_plant
@@ -461,9 +444,7 @@ def annotate_fires(
         elif prop["near_mining"]:
             prop["fire_type_rule"] = "mining"
 
-        vegetation_distance = _nearest_distance_meters(
-            point, vegetation_polygons, vegetation_tree
-        )
+        vegetation_distance = _nearest_distance_meters(point, vegetation_polygons, vegetation_tree)
         if vegetation_distance is not None:
             prop["vegetation_distance_m"] = round(vegetation_distance, 1)
             if vegetation_distance <= VEGETATION_BUFFER_METERS:
@@ -485,6 +466,6 @@ def annotate_fires(
     logger.info(
         "spatial.annotate_fires: END (%d fires processed in %.2fs)",
         len(fires_fc.get("features", [])),
-        _time.perf_counter() - _t0,
+        time.perf_counter() - _t0,
     )
     return fires_fc

@@ -52,9 +52,7 @@ def test_industrial_fire_summary_and_explanation():
 
 
 def test_industrial_burning_inside_zone():
-    prop = _summarize(
-        _props(fire_type_rule="industrial", near_industrial=True, distance_m=0)
-    )
+    prop = _summarize(_props(fire_type_rule="industrial", near_industrial=True, distance_m=0))
     assert "burning inside a mapped industrial facility" in prop["summary"]
 
 
@@ -90,9 +88,7 @@ def test_forest_deep_within():
 
 def test_forest_at_range_shows_distance():
     prop = _summarize(
-        _props(
-            fire_type_rule="forest", near_vegetation=True, vegetation_distance_m=2400
-        )
+        _props(fire_type_rule="forest", near_vegetation=True, vegetation_distance_m=2400)
     )
     assert "\u22482.4 km" in prop["summary"]
     assert "deep within" not in prop["summary"]
@@ -100,9 +96,7 @@ def test_forest_at_range_shows_distance():
 
 def test_other_natural_crop_burning():
     prop = _summarize(
-        _props(
-            fire_type_rule="other_natural", distance_m=None, vegetation_distance_m=None
-        )
+        _props(fire_type_rule="other_natural", distance_m=None, vegetation_distance_m=None)
     )
     assert prop["summary_headline"] == "Crop/Agricultural Burning"
     assert prop["summary_icon"] == "\U0001f33e"
@@ -162,6 +156,39 @@ def test_gas_flare_sub_label_mentioned():
     assert "VIIRS Nightfire" in prop["explanation"]
 
 
+def test_unregistered_persistent_note_in_summary():
+    prop = _summarize(
+        _props(
+            fire_type_rule="industrial",
+            near_industrial=True,
+            distance_m=340,
+            persistent_thermal_source=True,
+            occurrence_count=4,
+            unregistered_persistent=True,
+        )
+    )
+    assert prop["summary_unregistered"]
+    assert "Unregistered" in prop["summary_unregistered"]
+    assert "no known facility match" in prop["summary_unregistered"]
+    assert "Unregistered" in prop["summary"]
+
+
+def test_registered_persistent_has_no_unregistered_note():
+    prop = _summarize(
+        _props(
+            fire_type_rule="industrial",
+            near_industrial=True,
+            distance_m=340,
+            persistent_thermal_source=True,
+            occurrence_count=3,
+            unregistered_persistent=False,
+            power_plant_name="Panipat",
+        )
+    )
+    assert prop["summary_unregistered"] is None
+    assert "Unregistered" not in prop["summary"]
+
+
 def test_all_summary_fields_present():
     prop = _summarize(_props())
     for key in (
@@ -170,6 +197,37 @@ def test_all_summary_fields_present():
         "summary_detail",
         "summary_icon",
         "summary_persistent",
+        "summary_risk",
         "explanation",
     ):
         assert key in prop
+    assert prop["summary_risk"] is None
+
+
+def test_directional_risk_summary_uses_mandated_labels():
+    prop = _summarize(
+        _props(
+            directional_risk={
+                "spread_direction_deg": 180.0,
+                "weather": {
+                    "wind_speed_kmh": 24.0,
+                    "wind_direction_deg": 0.0,
+                    "temperature_c": 31.0,
+                    "humidity_pct": 41.0,
+                },
+            }
+        )
+    )
+    assert prop["summary_risk"]
+    assert "Directional Risk Indicator" in prop["summary_risk"]
+    assert "Estimated spread direction" in prop["summary_risk"]
+    assert "heuristic" in prop["summary_risk"]
+    assert "toward S" in prop["summary_risk"]
+    assert "validated fire-behavior model" in prop["summary_risk"].lower()
+    assert "prediction" not in prop["summary_risk"].lower()
+
+
+def test_directional_risk_summary_tolerates_missing_weather():
+    prop = _summarize(_props(directional_risk={"spread_direction_deg": None, "weather": {}}))
+    assert prop["summary_risk"]
+    assert "Directional Risk Indicator" in prop["summary_risk"]
