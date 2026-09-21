@@ -61,6 +61,11 @@ const POWER_PLANT_COLOR = "#64748b";
 const FLARE_COLOR = "#94a3b8";
 const MINING_COLOR = "#475569";
 
+/* Directional Risk Indicator (heuristic, opt-in overlay). */
+const RISK_TIER_COLORS = { high: "#c14953", medium: "#d48b3a", low: "#8b96a3" };
+let riskEnabled = false;
+const riskLayers = new Map(); // feature.id -> [coneLayer, arrowMarker]
+
 // GIBS publishes with ~1 d of lag and a given date can have a missing granule
 // over India (observed 404s from the WMTS for some dates). Instead of pinning
 // "yesterday", probe the last 7 days and pick the newest date whose India-region
@@ -220,12 +225,9 @@ const layerControl = L.control
 
 (async () => {
   const date = await pickGIBSDate();
-  if (!date) {
-    console.warn(
-      "GIBS: no recent date with India coverage found — satellite toggle disabled",
-    );
-    return;
-  }
+if (!date) {
+     return null;
+   }
   const attribution = "Imagery &copy; NASA GIBS";
   layerControl.addBaseLayer(
     L.tileLayer(
@@ -328,6 +330,124 @@ function formatFrp(frp) {
   return `${Number(frp).toFixed(1)} MW`;
 }
 
+/* ---- Directional Risk Indicator helpers ---- */
+
+function cardinal(deg) {
+  if (deg == null || !isFinite(deg)) return "—";
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return dirs[Math.round((((Number(deg) % 360) + 360) % 360) / 45) % 8];
+}
+
+function fmtDeg(deg) {
+  if (deg == null || !isFinite(deg)) return "—";
+  return `${Math.round(Number(deg))}° ${cardinal(deg)}`;
+}
+
+function fmtKmh(kmh) {
+  if (kmh == null || !isFinite(kmh)) return "—";
+  return `${Math.round(Number(kmh))} km/h`;
+}
+
+function riskTierColor(tier) {
+  return RISK_TIER_COLORS[tier] || RISK_TIER_COLORS.low;
+}
+
+/* Rotated wind arrow (points in the estimated spread direction) + speed. */
+function windArrowSvg(spreadDeg, speedKmh) {
+  const num =
+    speedKmh == null || !isFinite(speedKmh)
+      ? ""
+      : `<div class="wind-num">${Math.round(Number(speedKmh))}</div>`;
+  return (
+    `<div class="wind-arrow" title="Directional Risk Indicator \u00b7 wind ` +
+    `${fmtKmh(speedKmh)} (arrow = estimated spread direction, heuristic)">` +
+    `<svg width="26" height="26" viewBox="0 0 26 26" style="display:block;` +
+    `transform:rotate(${spreadDeg}deg);transform-origin:50% 50%">` +
+    `<path d="M13 1 L21 15 L15.5 15 L15.5 25 L10.5 25 L10.5 15 L5 15 Z" fill="#334155"/>` +
+    `</svg>${num}</div>`
+  );
+}
+
+/* Human-friendly risk note shown in every card + popup. */
+function riskBlockHtml(props) {
+  const r = props.directional_risk;
+  if (!r) return "";
+  const w = r.weather || {};
+  const tip =
+    "Estimated spread direction (heuristic) \u2014 based on current wind, " +
+    "nearby vegetation density and temperature/humidity dryness. This is " +
+    "NOT a validated fire-behavior model.";
+  return (
+    `<div class="risknote" title="${tip}">` +
+    `<span class="risk-title">\u{1F9ED} Directional Risk Indicator</span>` +
+    ` \u00b7 spread toward ${fmtDeg(r.spread_direction_deg)} (heuristic)<br>` +
+    `<span class="risk-meta">risk ${Number(r.risk_score).toFixed(2)} ` +
+    `(${r.risk_tier || "low"}) \u00b7 wind ${fmtKmh(w.wind_speed_kmh)} from ` +
+    `${fmtDeg(w.wind_direction_deg)}</span>` +
+    `</div>`
+  );
+}
+
+/* Draw the cone + wind arrow for one fire into its category group. */
+function renderRiskForFire(feature, group) {
+  const props = feature.properties || {};
+  const risk = props.directional_risk;
+  if (!risk) return;
+  const coords = feature.geometry && feature.geometry.coordinates;
+  if (!coords || !risk.geometry) return;
+  const [lon, lat] = coords;
+  const w = risk.weather || {};
+
+  const cone = L.geoJSON(null, {
+    className: "risk-cones",
+    style: {
+      color: riskTierColor(risk.risk_tier),
+      weight: 1,
+      fillColor: riskTierColor(risk.risk_tier),
+      fillOpacity: 0.2,
+      dashArray: "4 4",
+    },
+    interactive: false,
+  });
+  cone.addData({
+    type: "FeatureCollection",
+    features: [{ type: "Feature", geometry: risk.geometry, properties: {} }],
+  });
+  cone.addTo(group);
+
+  const arrow = L.marker([lat, lon], {
+    icon: L.divIcon({
+      className: "wind-arrow-icon",
+      html: windArrowSvg(risk.spread_direction_deg || 0, w.wind_speed_kmh),
+      iconSize: [30, 34],
+      iconAnchor: [15, 15],
+    }),
+    keyboard: false,
+    zIndexOffset: 900,
+  }).bindPopup(firePopupContent(props));
+  arrow.addTo(group);
+
+  riskLayers.set(feature.id, [cone, arrow]);
+}
+
+function resetRiskLayers() {
+  for (const layers of riskLayers.values()) {
+    for (const layer of layers) layer.remove();
+  }
+  riskLayers.clear();
+}
+
+/* Toggle the risk overlay without touching markers/sidebar. */
+function syncRiskLayers() {
+  if (!cache.firesFC) return;
+  resetRiskLayers();
+  if (!riskEnabled) return;
+  for (const feature of cache.firesFC.features || []) {
+    const cat = fireCategory(feature.properties || {});
+    renderRiskForFire(feature, fireGroups[cat]);
+  }
+}
+
 /* FIRMS `acq_time` is a UTC HHMM integer (2400 = midnight, next day). */
 function acqTimestamp(acqDate, acqTime) {
   if (!acqDate) return null;
@@ -415,6 +535,33 @@ function fireKvHtml(props) {
   if (props.persistent_thermal_source) {
     rows.push(["Occurrences", `${props.occurrence_count} days / 14`]);
   }
+  if (props.directional_risk) {
+    const r = props.directional_risk;
+    const w = r.weather || {};
+    rows.push([
+      "Directional Risk Indicator",
+      "Estimated spread direction (heuristic) — wind/vegetation/dryness blend, not a validated fire-behavior model.",
+    ]);
+    rows.push([
+      "Risk (heuristic)",
+      `${Number(r.risk_score).toFixed(2)} ${r.risk_tier || "low"}`,
+    ]);
+    rows.push(["Spread toward", fmtDeg(r.spread_direction_deg)]);
+    rows.push(["Cone length", formatDistance(r.cone_length_m)]);
+    rows.push([
+      "Cone half-angle",
+      r.cone_half_angle_deg != null ? `${r.cone_half_angle_deg}°` : "—",
+    ]);
+    rows.push([
+      "Wind",
+      `${fmtKmh(w.wind_speed_kmh)} from ${fmtDeg(w.wind_direction_deg)}`,
+    ]);
+    rows.push([
+      "Temperature",
+      w.temperature_c != null ? `${w.temperature_c}°C` : "—",
+    ]);
+    rows.push(["Humidity", w.humidity_pct != null ? `${w.humidity_pct}%` : "—"]);
+  }
   return rows.map(([k, v]) => `<div><b>${k}:</b> ${v}</div>`).join("");
 }
 
@@ -444,10 +591,12 @@ function fireVerdictHtml(props) {
         `data-acq-date="${props.acq_date}" data-acq-time="${props.acq_time}">` +
         `${timeSinceText(ageTs)}</span>`;
   const meta = frpEl || ageEl ? `<div class="meta">${frpEl}${ageEl}</div>` : "";
+  const risk = riskBlockHtml(props);
   return (
     `<div class="verdict"><span class="badge badge-${cat}">${icon}</span>${headline}</div>` +
     detail +
     meta +
+    risk +
     persistent +
     unreg +
     reason +
@@ -493,6 +642,7 @@ function markerStyle(props) {
 function renderFireMarkers(features) {
   for (const g of Object.values(fireGroups)) g.clearLayers();
   fireMarkers.clear();
+  resetRiskLayers();
   for (const feature of features) {
     const [lon, lat] = feature.geometry.coordinates;
     const props = feature.properties || {};
@@ -505,6 +655,12 @@ function renderFireMarkers(features) {
       if (el) el.classList.add("marker-persistent");
     }
     fireMarkers.set(feature.id, marker);
+  }
+  if (riskEnabled) {
+    for (const feature of features) {
+      const cat = fireCategory(feature.properties || {});
+      renderRiskForFire(feature, fireGroups[cat]);
+    }
   }
   applyFireFilter();
 }
@@ -1012,6 +1168,15 @@ document.getElementById("reload").addEventListener("click", () => {
     loadDetections(true);
   }
 });
+
+/* Directional Risk Indicator overlay: opt-in, never on by default. */
+const riskToggle = document.getElementById("risk-toggle");
+if (riskToggle) {
+  riskToggle.addEventListener("change", (e) => {
+    riskEnabled = e.target.checked;
+    if (currentView === "detections") syncRiskLayers();
+  });
+}
 
 loadDetections();
 

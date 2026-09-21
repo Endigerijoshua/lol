@@ -29,6 +29,9 @@
       --text-2: #495057;
       --text-3: #6c757d;
 
+      --severe: #e5484d;        /* high confidence */
+      --nominal: #f59e0b;     /* nominal */
+      --low: #fde68a;         /* low confidence */
       --accent: #5f8575;      /* muted sage green — calm, professional */
       --accent-dim: #7a9d8f;
       --accent-hover: #4a6d5f;
@@ -286,6 +289,25 @@
       border: 1px solid rgba(193, 73, 83, 0.25); border-radius: 6px;
       line-height: 1.4;
     }
+    /* Directional Risk Indicator: card note + map cone/arrow decoration */
+    .risknote {
+      margin: 8px 0 0; padding: 7px 9px;
+      font-size: 12px; line-height: 1.45; color: var(--text-2);
+      background: rgba(212, 139, 58, 0.08);
+      border: 1px solid rgba(212, 139, 58, 0.28); border-radius: 6px;
+    }
+    .risknote .risk-title { font-weight: 600; color: var(--amber); }
+    .risknote .risk-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+    #risk-toggle-wrap { margin: 0 0 14px; }
+    .risk-info { color: var(--text-3); cursor: help; font-size: 12px; padding-right: 2px; }
+    .risk-info:hover { color: var(--accent); }
+    .wind-arrow-icon svg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+    .wind-arrow-icon .wind-num {
+      font-family: var(--font-mono); font-size: 9px; line-height: 1;
+      text-align: center; color: #334155; background: rgba(255, 255, 255, 0.75);
+      border-radius: 3px; padding: 1px 2px; margin: 0 auto; width: fit-content;
+    }
+    #map path.risk-cone { cursor: default; }
     #legend { margin-top: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px 14px; }
     #legend .swatch {
       display: inline-block; width: 10px; height: 10px; border-radius: 50%;
@@ -597,17 +619,28 @@
           </label>
         </div>
       </div>
+      <label class="filter-checkbox" id="risk-toggle-wrap" title="Directional Risk Indicator">
+        <input type="checkbox" id="risk-toggle">
+        <span class="custom-checkbox"></span>
+        <span class="checkbox-label">
+          <span class="checkbox-label-text">
+            <span class="emoji">🧭</span>
+            <span>Directional Risk Indicator</span>
+          </span>
+          <span class="risk-info" title="Estimated spread direction (heuristic) — based on current wind, nearby vegetation density and temperature/humidity dryness. This is NOT a validated fire-behavior model.">ⓘ</span>
+        </span>
+      </label>
       <button id="reload" class="btn-reload">Refresh data</button>
       <div id="summary">Loading…</div>
-      <div id="legend">
-        <span><span class="swatch" style="background:#e5484d"></span>High</span>
-        <span><span class="swatch" style="background:#f59e0b"></span>Nominal</span>
-        <span><span class="swatch" style="background:#fde68a"></span>Low</span>
-        <span><span class="ring"></span>Persistent</span>
-        <span><span class="swatch" style="background:#94a3b8"></span>Flare</span>
-        <span><span class="swatch" style="background:#64748b"></span>Site</span>
-        <span><span class="swatch" style="background:#475569;opacity:.5"></span>Zone</span>
-        <span><span class="swatch" style="background:#64748b"></span>Plant</span>
+<div id="legend">
+        <span><span class="swatch" style="background:var(--severe)"></span>High</span>
+        <span><span class="swatch" style="background:var(--nominal)"></span>Nominal</span>
+        <span><span class="swatch" style="background:var(--low)"></span>Low</span>
+        <span class="ring">Persistent</span>
+        <span><span class="swatch" style="background:var(--flare)"></span>Flare</span>
+        <span><span class="swatch" style="background:var(--site)"></span>Site</span>
+        <span><span class="swatch" style="background:var(--industrial);opacity:.5"></span>Zone</span>
+        <span><span class="swatch" style="background:var(--power)"></span>Plant</span>
       </div>
     </div>
     <div id="list">

@@ -153,14 +153,12 @@ MINING_POLY_OVERLAP = {
 MINING_OVERLAP_FC = {"type": "FeatureCollection", "features": [MINING_POLY_OVERLAP]}
 
 
-def _run(
-    fires, vegetation_fc=None, power_plants_fc=None, flares_fc=None, mining_fc=None
-):
+def _run(fires, vegetation_fc=None, power_plants_fc=None, flares_fc=None, mining_fc=None):
     fc = {"type": "FeatureCollection", "features": fires}
     zones = {"type": "FeatureCollection", "features": [PLANT_POLY]}
-    return spatial.annotate_fires(
-        fc, zones, vegetation_fc, power_plants_fc, flares_fc, mining_fc
-    )["features"]
+    return spatial.annotate_fires(fc, zones, vegetation_fc, power_plants_fc, flares_fc, mining_fc)[
+        "features"
+    ]
 
 
 def test_fire_inside_zone_flagged():
@@ -375,9 +373,7 @@ def test_fire_near_mining_and_industrial_stays_industrial():
     prop = feats[0]["properties"]
     assert prop["fire_type_rule"] == "industrial"
     assert prop["near_industrial"] is True
-    assert (
-        prop["near_mining"] is True
-    )  # recorded as proximity even when industrial wins
+    assert prop["near_mining"] is True  # recorded as proximity even when industrial wins
 
 
 def test_fire_near_mining_and_forest_is_mining():
@@ -462,12 +458,18 @@ def test_frontend_category_mapping_is_exclusive():
     cases = [
         {"fire_type_rule": "forest", "near_vegetation": True},
         {"fire_type_rule": "other_natural", "near_vegetation": False},
-        {"fire_type_rule": "forest", "near_vegetation": True,
-         "persistent_thermal_source": True, "occurrence_count": 3},
-        {"fire_type_rule": "forest", "near_vegetation": True,
-         "unregistered_persistent": True},
-        {"fire_type_rule": "other_natural", "near_vegetation": False,
-         "gas_flare": True},  # malformed data: precedence still picks ONE
+        {
+            "fire_type_rule": "forest",
+            "near_vegetation": True,
+            "persistent_thermal_source": True,
+            "occurrence_count": 3,
+        },
+        {"fire_type_rule": "forest", "near_vegetation": True, "unregistered_persistent": True},
+        {
+            "fire_type_rule": "other_natural",
+            "near_vegetation": False,
+            "gas_flare": True,
+        },  # malformed data: precedence still picks ONE
         {"fire_type_rule": "forest"},  # missing flag: rule takes precedence
         {},  # empty props → agriculture
         {"fire_type_rule": "other_natural", "near_vegetation": True},  # legacy data
@@ -479,6 +481,6 @@ def test_frontend_category_mapping_is_exclusive():
         buckets.setdefault(cat, set()).add(i)
 
     assert buckets["forest"].isdisjoint(buckets["other_natural"])
-    assert _frontend_category(
-        {"fire_type_rule": "other_natural", "near_vegetation": True}
-    ) == "forest"  # hardened fallback keeps agriculture free of forest flags
+    assert (
+        _frontend_category({"fire_type_rule": "other_natural", "near_vegetation": True}) == "forest"
+    )  # hardened fallback keeps agriculture free of forest flags

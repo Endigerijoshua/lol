@@ -13,17 +13,13 @@ SAMPLE_PROPS = {
 }
 
 
-@pytest.mark.skipif(
-    not ml.MODEL_FILE.exists(), reason="models/fire_classifier.pkl not trained yet"
-)
+@pytest.mark.skipif(not ml.MODEL_FILE.exists(), reason="models/fire_classifier.pkl not trained yet")
 def test_predict_from_props_returns_valid_class():
     prediction = ml.predict(SAMPLE_PROPS)
     assert prediction in ml.VALID_CLASSES
 
 
-@pytest.mark.skipif(
-    not ml.MODEL_FILE.exists(), reason="models/fire_classifier.pkl not trained yet"
-)
+@pytest.mark.skipif(not ml.MODEL_FILE.exists(), reason="models/fire_classifier.pkl not trained yet")
 def test_predict_near_industrial_is_industrial():
     props = dict(SAMPLE_PROPS, distance_m=250.0, near_industrial=True)
     assert ml.predict(props) == "industrial"

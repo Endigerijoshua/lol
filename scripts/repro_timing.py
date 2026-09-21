@@ -23,9 +23,7 @@ def distributions(fires):
     counts = Counter()
     for f in fires["features"]:
         p = f["properties"]
-        counts[p.get("fire_type_rule")] = (
-            counts.get(p.get("fire_type_rule", "?"), 0) + 1
-        )
+        counts[p.get("fire_type_rule")] = counts.get(p.get("fire_type_rule", "?"), 0) + 1
         p.setdefault("fire_type_ml", None)
     ml_counts = Counter(f["properties"].get("fire_type_ml") for f in fires["features"])
     return dict(counts), dict(ml_counts)

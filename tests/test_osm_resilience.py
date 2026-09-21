@@ -53,9 +53,7 @@ def test_fetch_region_falls_back_from_timeout_to_next_mirror():
             second: _json_response({"elements": [{"type": "way", "id": 1}]}),
         }
     )
-    result = asyncio.run(
-        osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90)
-    )
+    result = asyncio.run(osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90))
     assert result == [{"type": "way", "id": 1}]
     assert client.requests == [first, second]
 
@@ -68,9 +66,7 @@ def test_fetch_region_falls_back_from_http_500_to_next_mirror():
             second: _json_response({"elements": [{"type": "way", "id": 2}]}),
         }
     )
-    result = asyncio.run(
-        osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90)
-    )
+    result = asyncio.run(osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90))
     assert result == [{"type": "way", "id": 2}]
     assert client.requests == [first, second]
 
@@ -84,21 +80,15 @@ def test_fetch_region_falls_back_from_garbage_body_to_next_mirror():
             second: _json_response({"elements": [{"type": "way", "id": 3}]}),
         }
     )
-    result = asyncio.run(
-        osm.fetch_region(72.0, 15.0, 81.0, 22.5, "vegetation", client, 90)
-    )
+    result = asyncio.run(osm.fetch_region(72.0, 15.0, 81.0, 22.5, "vegetation", client, 90))
     assert result == [{"type": "way", "id": 3}]
     assert client.requests == [first, second]
 
 
 def test_fetch_region_raises_runtime_error_when_all_mirrors_fail():
-    client = ScriptedClient(
-        {url: _status_response(503) for url in osm.OVERPASS_URLS}
-    )
+    client = ScriptedClient({url: _status_response(503) for url in osm.OVERPASS_URLS})
     with pytest.raises(RuntimeError, match="Overpass unavailable"):
-        asyncio.run(
-            osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90)
-        )
+        asyncio.run(osm.fetch_region(72.0, 15.0, 81.0, 22.5, "industrial", client, 90))
     assert len(client.requests) == len(osm.OVERPASS_URLS)
 
 
@@ -129,5 +119,6 @@ def test_server_startup_does_not_import_overpass_network():
 
     start = time.perf_counter()
     import app.main  # noqa: F401
+
     elapsed = time.perf_counter() - start
     assert elapsed < osm.OVERPASS_REQUEST_TIMEOUT_SECONDS

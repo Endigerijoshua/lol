@@ -235,6 +235,8 @@ sih-fire-detection/
 │   │   ├── powerplants.py    # WRI power-plant DB fetch → point GeoJSON (cached)
 │   │   ├── spatial.py        # rule-based fire_type (industrial/forest/other_natural)
 │   │   ├── persistence.py    # recurrence detection & severity scoring
+│   │   ├── weather.py        # Open-Meteo current weather (risk indicator input)
+│   │   ├── risk.py           # heuristic directional spread cone (wind/veg/dryness)
 │   │   ├── ml.py             # fire_type_ml: load model + shared feature encoding
 │   │   └── clustering.py     # (stretch) DBSCAN site grouping
 │   ├── db.py                 # SQLite schema + access helpers
@@ -404,5 +406,36 @@ sih-fire-detection/
     (acq_date ≥ today UTC). A status chip shows "New since X: N of M detections".
   - Tests: `tests/test_diff.py` (9) + unregistered/is_new cases in
     `tests/test_persistence.py` + summary note tests — 88 total, ruff clean.
+- [x] Directional Risk Indicator (heuristic, Open-Meteo): every high-priority fire
+      (persistent thermal source OR FRP ≥ `risk_frp_threshold_mw` = 10 MW) gets a
+      wind-based spread cone. `app/services/weather.py` fetches current
+      temperature/humidity/wind speed+direction from Open-Meteo (free, no key;
+      10 s timeout, process-local ~10 km-grid TTL cache in `weather_cache_ttl_seconds`
+      = 600 s); `app/services/risk.py` builds the cone — length scales UP with wind
+      speed (`risk_cone_min/max_length_m` = 500→5000 m), half-angle scales DOWN
+      (faster wind = narrower/more directional), spread direction = 180° opposite
+      the meteorological "from" direction, and risk intensity is a weighted linear
+      blend (0.34 wind + 0.33 vegetation + 0.33 dryness) of wind, reused OSM
+      `vegetation_distance_m` and a temperature/humidity dryness factor. **Heuristic,
+      not a fire-behavior model — it is NEVER wired to the ML pipeline.**
+      Pipeline: `main.py` calls `await risk.annotate_directional_risk(fires_fc)` in
+      `/api/flagged-fires` after persistence, before summary. Graceful degradation:
+      `fetch_weather` returns None on any HTTP/network/parse failure and the fire
+      simply renders without the overlay (tests prove no crash). UI labels are fixed:
+      **"Directional Risk Indicator"** / **"Estimated spread direction (heuristic)"**
+      (never "prediction"/"predicted path") on the sidebar toggle, card risk note
+      (`summary_risk` in `app/services/summary.py`), popup Details rows, and the
+      map cone/arrow tooltips; an ⓘ tooltip explains it is based on
+      wind/vegetation/dryness, not validated. Frontend: opt-in 🧭 toggle under the
+      category filters (OFF by default) that draws semi-transparent risk-tier-colored
+      cones + rotated wind-speed arrows (cones live inside each fire's own category
+      layer group so they follow filter visibility); cone tooltips only on the small
+      arrow marker (cones are `interactive: false` so the fire popup is not blocked).
+      Tests: `tests/test_risk.py` (direction/length/width/vegetation/dryness/bounds/
+      high-priority + graceful degradation via a stubbed weather module) +
+      `tests/test_weather.py` (parse, cache dedupe, network/HTTP/empty → None) +
+      summary label tests + `tests/test_risk_pipeline.py` (end-to-end
+      `/api/flagged-fires` wiring: risk present for high-FRP fires, and the
+      pipeline survives a weather outage) — 122 total, ruff clean.
 - [ ] DBSCAN clustering (stretch)
 - [ ] Deployed somewhere accessible for demo

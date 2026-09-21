@@ -27,20 +27,10 @@ from ..config import repo_path, settings
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URLS = (
-    "https://lz4.overpass-api.de/api/interpreter",               # fast (3-5 s)
-    "https://overpass.openstreetmap.fr/api/interpreter",          # fast (3-5 s)
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",   # fast (3-5 s)
-    "https://overpass-api.de/api/interpreter",                    # medium
-    "https://z.overpass-api.de/api/interpreter",                  # slow (6-20 s)
-    "https://overpass.kumi.systems/api/interpreter",              # very slow (30 s+)
-)
-
-OVERPASS_RETRIES = 1
-OVERPASS_RETRY_BACKOFF_SECONDS = (2.0,)
-
-# Per-request HTTP timeout. Fast mirrors respond in 1-3s; drop slow/hung mirrors quickly.
-OVERPASS_REQUEST_TIMEOUT_SECONDS = 12.0
+OVERPASS_URLS = settings.overpass_urls
+OVERPASS_RETRIES = settings.overpass_retries
+OVERPASS_RETRY_BACKOFF_SECONDS = (settings.overpass_retry_backoff_seconds,)
+OVERPASS_REQUEST_TIMEOUT_SECONDS = settings.overpass_request_timeout_seconds
 
 OVERPASS_HEADERS = {
     "Accept": "application/json",
@@ -75,9 +65,7 @@ CACHE_FILE_SETTINGS = {
 def parse_state_bbox(bbox: str) -> tuple[float, float, float, float]:
     """Parse a state bbox 'west,south,east,north' into floats."""
     parts = [float(p.strip()) for p in bbox.split(",")]
-    if len(parts) != 4 or not all(
-        a < b for a, b in ((parts[0], parts[2]), (parts[1], parts[3]))
-    ):
+    if len(parts) != 4 or not all(a < b for a, b in ((parts[0], parts[2]), (parts[1], parts[3]))):
         raise ValueError(f"invalid state bbox: {bbox}")
     return parts[0], parts[1], parts[2], parts[3]
 
@@ -183,13 +171,9 @@ def _cache_is_fresh(path: Path, zone_type: str) -> bool:
     age_seconds = time.time() - path.stat().st_mtime
     fresh = age_seconds < settings.industrial_cache_max_age_hours * 3600
     if fresh:
-        logger.info(
-            "%s zones cache is fresh (%.1f h old)", zone_type, age_seconds / 3600
-        )
+        logger.info("%s zones cache is fresh (%.1f h old)", zone_type, age_seconds / 3600)
     else:
-        logger.info(
-            "%s zones cache is stale (%.1f h old)", zone_type, age_seconds / 3600
-        )
+        logger.info("%s zones cache is stale (%.1f h old)", zone_type, age_seconds / 3600)
     return fresh
 
 
@@ -277,16 +261,13 @@ async def fetch_region(
                     sleep_s = OVERPASS_RETRY_BACKOFF_SECONDS[
                         min(attempt, len(OVERPASS_RETRY_BACKOFF_SECONDS) - 1)
                     ]
-                    logger.warning(
-                        "%s failed (%s) — retrying in %ss", base_url, exc, sleep_s
-                    )
+                    logger.warning("%s failed (%s) — retrying in %ss", base_url, exc, sleep_s)
                     await asyncio.sleep(sleep_s)
                     continue
                 logger.warning("%s failed (%s) — trying next mirror", base_url, exc)
                 break
     raise RuntimeError(
-        f"Overpass unavailable for {zone_type} bbox "
-        f"{west},{south},{east},{north}: {last_error}"
+        f"Overpass unavailable for {zone_type} bbox {west},{south},{east},{north}: {last_error}"
     )
 
 
@@ -325,9 +306,7 @@ async def _fetch_all_tiles(
     for state, bbox in settings.industrial_states.items():
         west, south, east, north = parse_state_bbox(bbox)
         for tile in tile_bbox(west, south, east, north):
-            tasks.append(
-                _fetch_one(zone_type, state, tile, client, timeout, semaphore, failures)
-            )
+            tasks.append(_fetch_one(zone_type, state, tile, client, timeout, semaphore, failures))
     results = await asyncio.gather(*tasks)
     elements = [element for group in results for element in group]
     return elements, failures["count"]

@@ -230,9 +230,9 @@ def main() -> int:
     )
 
     print("\n=== Training RandomForestClassifier (n_estimators=100) ===")
-    baseline = RandomForestClassifier(
-        n_estimators=100, random_state=args.random_state
-    ).fit(X_train, y_train)
+    baseline = RandomForestClassifier(n_estimators=100, random_state=args.random_state).fit(
+        X_train, y_train
+    )
 
     print("=== ... wrapped in CalibratedClassifierCV (isotonic, cv=5) ===")
     model = CalibratedClassifierCV(

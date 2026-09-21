@@ -45,7 +45,7 @@ def db_path() -> str:
 
 def today() -> dt.date:
     """UTC date, used as the reference point for persistence lookback windows."""
-    return dt.datetime.now(dt.timezone.utc).date()
+    return dt.datetime.now(dt.UTC).date()
 
 
 @contextmanager
@@ -85,15 +85,13 @@ def record_featurecollection(fc: dict) -> int:
                 props.get("frp"),
                 props.get("satellite"),
                 props.get("daynight"),
-                dt.datetime.now(dt.timezone.utc).isoformat(),
+                dt.datetime.now(dt.UTC).isoformat(),
             )
         )
     return _insert_many(rows)
 
 
-def _feature_key(
-    lat: float, lon: float, acq_date: str, acq_time, satellite
-) -> tuple:
+def _feature_key(lat: float, lon: float, acq_date: str, acq_time, satellite) -> tuple:
     """Dedup key mirroring the fire_history UNIQUE constraint."""
     return (float(lat), float(lon), str(acq_date), acq_time, satellite)
 
@@ -115,7 +113,10 @@ def existing_feature_keys(fc: dict) -> set[tuple]:
                 continue
             want.append(
                 _feature_key(
-                    lat, lon, props["acq_date"], props.get("acq_time"),
+                    lat,
+                    lon,
+                    props["acq_date"],
+                    props.get("acq_time"),
                     props.get("satellite"),
                 )
             )
@@ -155,7 +156,10 @@ def annotate_new_since_last_refresh(fc: dict) -> dict:
             lon, lat = coords[0], coords[1]
             if lon is not None and lat is not None:
                 key = _feature_key(
-                    lat, lon, props["acq_date"], props.get("acq_time"),
+                    lat,
+                    lon,
+                    props["acq_date"],
+                    props.get("acq_time"),
                     props.get("satellite"),
                 )
                 is_new = key not in existing
@@ -182,9 +186,7 @@ def _insert_many(rows: list[tuple]) -> int:
     return inserted
 
 
-def distinct_days_near(
-    lat: float, lon: float, radius_m: float, lookback_days: int
-) -> list[str]:
+def distinct_days_near(lat: float, lon: float, radius_m: float, lookback_days: int) -> list[str]:
     """Distinct acq_dates of past detections within `radius_m` of (lat, lon).
 
     A coarse degree-based bounding box filters in SQL, then the exact
@@ -246,8 +248,5 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
     d_lambda = math.radians(lon2 - lon1)
-    a = (
-        math.sin(d_phi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    )
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return 2 * radius * math.asin(math.sqrt(a))

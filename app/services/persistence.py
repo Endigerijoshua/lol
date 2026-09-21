@@ -67,9 +67,7 @@ def _unregistered_persistent(props: dict) -> bool:
     """
     if not props.get("persistent_thermal_source"):
         return False
-    return not (
-        props.get("near_power_plant") and props.get("power_plant_name")
-    )
+    return not (props.get("near_power_plant") and props.get("power_plant_name"))
 
 
 def annotate_persistence(features_fc: dict) -> dict:

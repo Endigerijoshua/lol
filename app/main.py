@@ -7,6 +7,8 @@ endpoints that fetch + enrich live fire data.
 import asyncio
 import logging
 import sys
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Check runs before importing app.services / app.config — those modules use
@@ -44,6 +46,7 @@ from .services import (
     osm,
     persistence,
     powerplants,
+    risk,
     spatial,
     summary,
 )
@@ -52,10 +55,53 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+async def _prewarm_reference_layers() -> None:
+    """Pre-load reference layers + build spatial index in the background at startup.
+
+    The first /api/flagged-fires call normally pays the full cost of parsing
+    ~228 MB of vegetation polygons and building a shapely STRtree over 123k+
+    polygons (~30-40 s). Running this as a background task means the index is
+    ready before a user opens the dashboard, so their first load is fast.
+    """
+    try:
+        t0 = time.perf_counter()
+        logger.info("[prewarm] loading reference layers in background…")
+        layers = await _reference_layers()
+        logger.info(
+            "[prewarm] reference layers ready in %.1fs — building spatial index…",
+            time.perf_counter() - t0,
+        )
+        spatial.annotate_fires(
+            {"type": "FeatureCollection", "features": []},
+            *layers,
+            cache_version=_reference_cache_version(),
+        )
+        logger.info(
+            "[prewarm] spatial index built in %.1fs total",
+            time.perf_counter() - t0,
+        )
+    except Exception:
+        logger.warning("[prewarm] failed", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(_prewarm_reference_layers())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 app = FastAPI(
     title="SIH26162 Industrial Fire Detection",
     description="Live industrial fire + persistent thermal source detection using NASA FIRMS and OSM.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -68,28 +114,14 @@ app.add_middleware(
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
-PLACEHOLDER_INDEX = """<!doctype html>
-<html><head><meta charset="utf-8"><title>SIH26162</title></head>
-<body><h1>SIH26162 — Industrial Fire Detection</h1>
-<p>Backend is running. Frontend map is coming in a later milestone.</p>
-<p>Try <a href="/api/fires">/api/fires</a> for live NASA FIRMS hotspots (GeoJSON).</p>
-</body></html>"""
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    path = STATIC_DIR / "landing.html"
-    if path.exists():
-        return FileResponse(path)
-    return PLACEHOLDER_INDEX
+    return FileResponse(STATIC_DIR / "landing.html")
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
-    path = STATIC_DIR / "index.html"
-    if path.exists():
-        return FileResponse(path)
-    return PLACEHOLDER_INDEX
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/health")
@@ -117,9 +149,7 @@ async def get_fires(days: int | None = None) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (httpx.HTTPError, RuntimeError) as exc:
-        raise HTTPException(
-            status_code=502, detail=f"NASA FIRMS API error: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"NASA FIRMS API error: {exc}") from exc
 
 
 @app.get("/api/industrial-zones")
@@ -170,14 +200,13 @@ async def get_flares() -> dict:
 
 @app.get("/api/flagged-fires")
 async def get_flagged_fires(days: int | None = None) -> dict:
-    """Live fires annotated with rule-based + ML fire type and persistence."""
+    """Live fires annotated with rule-based + ML fire type, persistence and a
+    heuristic directional risk indicator (wind/vegetation/dryness)."""
     try:
         fires_fc = await firms.fetch_fires(days=days)
         db.annotate_new_since_last_refresh(fires_fc)
         db.record_featurecollection(fires_fc)
-        logger.info(
-            "[flagged-fires] %d fires fetched", len(fires_fc.get("features", []))
-        )
+        logger.info("[flagged-fires] %d fires fetched", len(fires_fc.get("features", [])))
         (
             industrial_fc,
             vegetation_fc,
@@ -207,27 +236,45 @@ async def get_flagged_fires(days: int | None = None) -> dict:
         logger.info("[flagged-fires] START persistence.annotate_persistence")
         persistence.annotate_persistence(fires_fc)
         logger.info("[flagged-fires] END persistence.annotate_persistence")
+        logger.info("[flagged-fires] START risk.annotate_directional_risk")
+        await risk.annotate_directional_risk(fires_fc)
+        logger.info("[flagged-fires] END risk.annotate_directional_risk")
         logger.info("[flagged-fires] START ml.annotate_fire_type_ml")
         ml.annotate_fire_type_ml(fires_fc)
         logger.info("[flagged-fires] END ml.annotate_fire_type_ml")
         logger.info("[flagged-fires] START summary.add_summary")
         summary.add_summary(fires_fc)
         logger.info("[flagged-fires] END summary.add_summary")
-        logger.info(
-            "[flagged-fires] complete: %d fires", len(fires_fc.get("features", []))
-        )
+        logger.info("[flagged-fires] complete: %d fires", len(fires_fc.get("features", [])))
         return fires_fc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (httpx.HTTPError, RuntimeError) as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream API error: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Upstream API error: {exc}") from exc
+
+
+_REFERENCE_LAYERS_CACHE: dict[str, tuple[dict, dict, dict, dict, dict]] = {}
 
 
 async def _reference_layers() -> tuple[dict, dict, dict, dict, dict]:
-    """Fetch industrial + vegetation + mining zones, power plants and flare sites."""
-    logger.info("_reference_layers: START fetch")
+    """Fetch industrial + vegetation + mining zones, power plants and flare sites.
+
+    The layers are cached in memory keyed by `_reference_cache_version()` (a
+    fingerprint of the on-disk cache files). Re-reading + parsing the reference
+    layers costs seconds on every request (the vegetation file alone is ~228 MB /
+    ~123k features), so a live dashboard must reuse the parsed dicts until a
+    cache file actually changes.
+    """
+    version = _reference_cache_version()
+    cached = _REFERENCE_LAYERS_CACHE.get(version)
+    if cached is not None:
+        logger.info(
+            "_reference_layers: reusing in-memory layers (%s)",
+            version,
+        )
+        return cached
+
+    logger.info("_reference_layers: START fetch (%s)", version)
     (
         industrial_fc,
         vegetation_fc,
@@ -249,7 +296,16 @@ async def _reference_layers() -> tuple[dict, dict, dict, dict, dict]:
         len(flares_fc.get("features", [])),
         len(mining_fc.get("features", [])),
     )
-    return industrial_fc, vegetation_fc, power_plants_fc, flares_fc, mining_fc
+    layers = (
+        industrial_fc,
+        vegetation_fc,
+        power_plants_fc,
+        flares_fc,
+        mining_fc,
+    )
+    _REFERENCE_LAYERS_CACHE.clear()  # only one live reference dataset at a time
+    _REFERENCE_LAYERS_CACHE[version] = layers
+    return layers
 
 
 def _reference_cache_version() -> str:
@@ -306,9 +362,7 @@ async def get_thermal_sites(days: int | None = None) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (httpx.HTTPError, RuntimeError) as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Upstream API error: {exc}"
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"Upstream API error: {exc}") from exc
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

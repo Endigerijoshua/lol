@@ -1,0 +1,9 @@
+[project]
+name = "sih-fire-detection"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "SIH26162 — AI-Based Detection and Classification of Industrial Fires and Persistent Thermal Sources Using NASA FIRMS, OSM & Satellite Data"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

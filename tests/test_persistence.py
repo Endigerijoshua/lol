@@ -112,9 +112,7 @@ def test_unregistered_persistent_when_no_facility_match():
 
 
 def test_unregistered_persistent_false_when_named_plant_match():
-    props = _annotate(
-        persistent=True, near_power_plant=True, power_plant_name="Panipat"
-    )
+    props = _annotate(persistent=True, near_power_plant=True, power_plant_name="Panipat")
     assert persistence._unregistered_persistent(props) is False
 
 
@@ -178,9 +176,7 @@ def test_registered_persistent_annotated_end_to_end(temp_db):
 
 
 def test_is_new_since_yesterday_for_today_yesterday_and_garbage():
-    assert persistence._is_new_since_yesterday(
-        {"acq_date": db.today().isoformat()}
-    ) is True
+    assert persistence._is_new_since_yesterday({"acq_date": db.today().isoformat()}) is True
     old = (db.today() - dt.timedelta(days=1)).isoformat()
     assert persistence._is_new_since_yesterday({"acq_date": old}) is False
     assert persistence._is_new_since_yesterday({"acq_date": "not-a-date"}) is False

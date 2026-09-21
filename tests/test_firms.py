@@ -66,7 +66,7 @@ def test_missing_firms_map_key_returns_400(monkeypatch):
 
 def test_is_point_in_india_accepts_indian_cities():
     for lon, lat in [
-        (77.2, 28.61),   # Delhi
+        (77.2, 28.61),  # Delhi
         (72.88, 19.08),  # Mumbai
         (92.75, 11.65),  # Port Blair, Andaman & Nicobar
         (91.28, 23.83),  # Agartala (NE border state, dropped by 110m boundary)
@@ -78,8 +78,8 @@ def test_is_point_in_india_rejects_neighbor_countries():
     # Cities in neighbouring countries that the raw FIRMS bbox includes.
     for lon, lat in [
         (67.03, 24.86),  # Karachi, Pakistan
-        (79.85, 6.93),   # Colombo, Sri Lanka
-        (90.4, 23.8),    # Dhaka, Bangladesh
+        (79.85, 6.93),  # Colombo, Sri Lanka
+        (90.4, 23.8),  # Dhaka, Bangladesh
         (85.32, 27.72),  # Kathmandu, Nepal
         (89.64, 27.47),  # Thimphu, Bhutan
         (96.16, 16.87),  # Yangon, Myanmar

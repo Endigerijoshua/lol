@@ -29,9 +29,7 @@ def _site_name(centroid: Point, industrial_fc: dict) -> tuple[str, dict | None]:
     if zone_info is None:
         return f"Site at {centroid.y:.2f}, {centroid.x:.2f}", None
     name = zone_info["name"] or "industrial zone"
-    distance_part = (
-        f" ({zone_info['distance_m'] / 1000:.1f} km)" if zone_info["name"] else ""
-    )
+    distance_part = f" ({zone_info['distance_m'] / 1000:.1f} km)" if zone_info["name"] else ""
     label = name if zone_info["name"] else "industrial zone"
     return f"Site near {label}{distance_part}", zone_info
 
@@ -56,9 +54,7 @@ def cluster_persistent_fires(
     min_samples = min_samples or settings.clustering_min_samples
 
     persistent = [
-        f
-        for f in features_fc["features"]
-        if f["properties"].get("persistent_thermal_source")
+        f for f in features_fc["features"] if f["properties"].get("persistent_thermal_source")
     ]
 
     meta = {"persistent_count": len(persistent), "unclustered": 0}
@@ -66,10 +62,7 @@ def cluster_persistent_fires(
         return {"type": "FeatureCollection", "features": [], "meta": meta}
 
     radians = np.radians(
-        [
-            [f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0]]
-            for f in persistent
-        ]
+        [[f["geometry"]["coordinates"][1], f["geometry"]["coordinates"][0]] for f in persistent]
     )
     labels = DBSCAN(
         eps=eps_m / EARTH_RADIUS_METERS,
